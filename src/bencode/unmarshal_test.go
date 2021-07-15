@@ -16,6 +16,8 @@ func TestDecodeInteger(t *testing.T) {
 	}{
 		{"i42e", bencode.Integer(42), false},
 		{"i0e", bencode.Integer(0), false},
+		{"i03e", bencode.Integer(0), true},
+		{"i-03e", bencode.Integer(0), true},
 		{"i-42e", bencode.Integer(-42), false},
 		{"i-0e", bencode.Integer(0), true},
 		{"i-ab0e", bencode.Integer(0), true},
@@ -23,7 +25,7 @@ func TestDecodeInteger(t *testing.T) {
 		var got bencode.Value
 		err := bencode.Unmarshal([]byte(test.input), &got)
 		if test.err && err == nil || !test.err && err != nil {
-			t.Errorf("%d: %s", i, err)
+			t.Errorf("%d: (%s) %s", i, test.input, err)
 		}
 
 		if !test.err && !reflect.DeepEqual(got, test.want) {
@@ -136,7 +138,7 @@ func TestUnmarshalTorrentFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d, ok := got.(*bencode.Dictionary)
+	d, ok := got.ToDict()
 	if !ok {
 		t.Fatal("BLABLA")
 	}
@@ -144,18 +146,9 @@ func TestUnmarshalTorrentFile(t *testing.T) {
 	wantKeys := []string{"announce", "announce-list", "comment", "created by", "creation date", "info", "url-list"}
 
 	for _, keyStr := range wantKeys {
-		val, ok := d.Get([]byte(keyStr))
+		_, ok := d.Get([]byte(keyStr))
 		if !ok {
 			t.Errorf("Expected to find key %s", keyStr)
 		}
-
-		t.Log(keyStr, val.Type())
-	}
-
-	info, _ := d.Get([]byte("info"))
-	dInfo, _ := info.(*bencode.Dictionary)
-
-	for _, k := range dInfo.Keys() {
-		t.Log(">>>", string(k))
 	}
 }

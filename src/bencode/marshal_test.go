@@ -74,6 +74,7 @@ func TestEncode(t *testing.T) {
 	})
 
 	t.Run("Dictionaries", func(t *testing.T) {
+		var nilDict *bencode.Dictionary
 		for i, test := range []struct {
 			keys   [][]byte
 			values []bencode.Value
@@ -85,8 +86,8 @@ func TestEncode(t *testing.T) {
 				want:   []byte("d3:bar4:spam3:fooi42ee"),
 			},
 			{
-				keys:   [][]byte{[]byte("bar"), []byte("foo"), []byte("baz")},
-				values: []bencode.Value{bencode.Bytes("spam"), bencode.Integer(42), bencode.List{bencode.Integer(100)}},
+				keys:   [][]byte{[]byte("bar"), []byte("foo"), []byte("baz"), []byte("nil")},
+				values: []bencode.Value{bencode.Bytes("spam"), bencode.Integer(42), bencode.List{bencode.Integer(100)}, nilDict},
 				want:   []byte("d3:bar4:spam3:bazli100ee3:fooi42ee"),
 			},
 		} {
@@ -113,4 +114,16 @@ func TestEncode(t *testing.T) {
 		}
 	})
 
+	t.Run("Nil Dict pointer", func(t *testing.T) {
+		var d *bencode.Dictionary
+		data, err := bencode.Marshal(d)
+
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(data) != 0 {
+			t.Errorf("Expected 0 bytes written, got %d", len(data))
+		}
+	})
 }

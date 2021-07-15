@@ -6,29 +6,18 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"regexp"
 	"strconv"
 )
 
 type Unmarshaler struct {
 	offset int64
-	r      interface {
-		io.ByteReader
+	io.Reader
+	io.ByteScanner
+	r interface {
 		io.Reader
 		io.ByteScanner
 	}
-}
-
-func NewDecoder(r io.Reader) *Unmarshaler {
-	return &Unmarshaler{r: bufio.NewReader(r)}
-}
-
-type InvalidUnmarshalError struct {
-	Type    reflect.Type
-	message string
-}
-
-func (e *InvalidUnmarshalError) Error() string {
-	return e.message
 }
 
 // Unmarshal parses the bencoded data and stores the result
@@ -45,28 +34,21 @@ func (u *Unmarshaler) Unmarshal(v *Value) error {
 
 	switch b {
 	case 'i':
-		return u.decodeInt(v)
+		return u.unmarshalInt(v)
 	case 'l':
-		return u.decodeList(v)
+		return u.unmarshalList(v)
 	case 'd':
-		return u.decodeDict(v)
+		return u.unmarshalDict(v)
 	default:
 		err := u.r.UnreadByte()
 		if err != nil {
 			return err
 		}
-		return u.decodeBytes(v)
+		return u.unmarshalBytes(v)
 	}
 }
 
-// Unmarshal parses the bencoded data and stores the result
-// in the value pointed to by v.
-func Unmarshal(data []byte, v *Value) error {
-	u := Unmarshaler{r: bytes.NewReader(data)}
-	return u.Unmarshal(v)
-}
-
-func (u *Unmarshaler) decodeInt(i *Value) error {
+func (u *Unmarshaler) unmarshalInt(i *Value) error {
 	var bs []byte
 
 	for {
@@ -77,8 +59,8 @@ func (u *Unmarshaler) decodeInt(i *Value) error {
 
 		if b == 'e' {
 			input := string(bs)
-			if input == "-0" {
-				return fmt.Errorf("Syntax error: -0")
+			if match, err := regexp.MatchString(`(^-?0\d+$)|(^-0$)`, input); match || err != nil {
+				return fmt.Errorf("Invalid Integer: %s", input)
 			}
 
 			n, err := strconv.ParseInt(input, 0, 0)
@@ -94,7 +76,7 @@ func (u *Unmarshaler) decodeInt(i *Value) error {
 	}
 }
 
-func (u *Unmarshaler) decodeBytes(v *Value) error {
+func (u *Unmarshaler) unmarshalBytes(v *Value) error {
 	var buf []byte
 
 	for {
@@ -138,7 +120,7 @@ func (u *Unmarshaler) decodeBytes(v *Value) error {
 
 }
 
-func (u *Unmarshaler) decodeList(v *Value) error {
+func (u *Unmarshaler) unmarshalList(v *Value) error {
 	var out []Value
 
 	for {
@@ -167,7 +149,7 @@ func (u *Unmarshaler) decodeList(v *Value) error {
 	}
 }
 
-func (u *Unmarshaler) decodeDict(v *Value) error {
+func (u *Unmarshaler) unmarshalDict(v *Value) error {
 	var dict Dictionary
 
 	for {
@@ -202,22 +184,22 @@ func (u *Unmarshaler) decodeDict(v *Value) error {
 	}
 }
 
-type Value interface {
-	Type() string
-	Value() interface{}
+// Unmarshal parses the bencoded data and stores the result
+// in the value pointed to by v.
+func Unmarshal(data []byte, v *Value) error {
+	u := Unmarshaler{r: bytes.NewReader(data)}
+	return u.Unmarshal(v)
 }
 
-type Integer int
+func NewUnmarshaler(r io.Reader) *Unmarshaler {
+	return &Unmarshaler{r: bufio.NewReader(r)}
+}
 
-func (i Integer) Type() string       { return "Integer" }
-func (i Integer) Value() interface{} { return i }
+type InvalidUnmarshalError struct {
+	Type    reflect.Type
+	message string
+}
 
-type List []Value
-
-func (l List) Type() string       { return "List" }
-func (l List) Value() interface{} { return l }
-
-type Bytes []byte
-
-func (b Bytes) Type() string       { return "Bytes" }
-func (b Bytes) Value() interface{} { return b }
+func (e *InvalidUnmarshalError) Error() string {
+	return e.message
+}
