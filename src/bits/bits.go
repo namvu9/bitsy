@@ -24,6 +24,7 @@ func (bf BitField) GetSum() int {
 	return sum
 }
 
+// TODO: TEST
 func GetMaxIndex(bitField []byte) int {
 	i := len(bitField) - 1
 	for i >= 0 {
@@ -45,9 +46,13 @@ func GetMaxIndex(bitField []byte) int {
 	return 0
 }
 
-// ParseBitField parses a bitField and returns the index of
-// the references pieces
-func ParseBitField(offset int, bitField byte) []int {
+// GetOnes returns the indices of the set (1) bits of the
+// bitfield
+//
+// Example: 
+// GetOnes([]byte{0b11000000}) -> []int{0, 1}
+// GetOnes([]byte{128, 128}) -> []int{0, 8}
+func GetOnes(offset int, bitField byte) []int {
 	var out []int
 	startIndex := offset * 8
 
@@ -61,10 +66,12 @@ func ParseBitField(offset int, bitField byte) []int {
 	return out
 }
 
-func (b BitField) IsIndexSet(index int) bool {
-	offset := index / 8
-	localIndex := index % 8
-	bitMask := byte(128 >> localIndex)
+func (b BitField) Get(index int) bool {
+	var (
+		offset     = index / 8
+		localIndex = index % 8
+		bitMask    = byte(128 >> localIndex)
+	)
 
 	// TODO: Test this case
 	if offset >= len(b) {
@@ -77,10 +84,12 @@ func (b BitField) IsIndexSet(index int) bool {
 }
 
 // TODO: TEST
-func (b BitField) SetIndex(index int) error {
-	offset := index / 8
-	localIndex := index % 8
-	bitMask := byte(128 >> localIndex)
+func (b BitField) Set(index int) error {
+	var (
+		offset     = index / 8
+		localIndex = index % 8
+		bitMask    = byte(128 >> localIndex)
+	)
 
 	// TODO: Test this case
 	if offset >= len(b) {
@@ -92,6 +101,17 @@ func (b BitField) SetIndex(index int) error {
 	return nil
 }
 
-func (b BitField) UnsetIndex(index int) {
+func (b BitField) Unset(index int) {}
 
+// Len returns the number of bits in the bitfield
+func (b BitField) Len() int {
+	return len(b) * 8
+}
+
+func NewBitField(bits int) []byte {
+	if bits%8 == 0 {
+		return make([]byte, bits/8)
+	}
+
+	return make([]byte, bits/8+1)
 }

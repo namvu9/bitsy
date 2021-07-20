@@ -162,10 +162,6 @@ func (t *TrackerGroup) Listen() (chan UDPAnnounceResponse, chan map[string]inter
 						continue
 					}
 
-					//if !t.d.CanDial() {
-					//continue
-					//}
-
 					n++
 					go func(tracker string) {
 						connID, err := UDPConnect(url, t.d)
@@ -175,7 +171,7 @@ func (t *TrackerGroup) Listen() (chan UDPAnnounceResponse, chan map[string]inter
 							return
 						}
 
-						req := NewUDPAnnounceReq(*t.InfoHash(), connID, t.Port, t.peerID)
+						req := NewUDPAnnounceReq(t.InfoHash(), connID, t.Port, t.peerID)
 						select {
 						case data := <-t.inCh:
 							req.Downloaded = data["downloaded"].(uint64)

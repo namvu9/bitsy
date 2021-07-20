@@ -28,8 +28,10 @@ type Torrent struct {
 // VerifyPiece returns true if the piece's SHA-1 hash equals
 // the SHA-1 hash of the torrent piece at index i
 func (t *Torrent) VerifyPiece(i int, piece []byte) bool {
-	refHash := t.Pieces()[i]
-	hash := sha1.Sum(piece)
+	var (
+		refHash = t.Pieces()[i]
+		hash    = sha1.Sum(piece)
+	)
 
 	return bytes.Equal(hash[:], refHash)
 }
@@ -97,8 +99,8 @@ func (t *Torrent) Name() string {
 // InfoHash returns the SHA-1 hash of the bencoded value of the
 // torrent's info field. The hash uniquely identifies the
 // torrent.
-func (t *Torrent) InfoHash() *[20]byte {
-	var out = new([20]byte)
+func (t *Torrent) InfoHash() [20]byte {
+	var out [20]byte
 	b, ok := t.dict.GetBytes("info-hash")
 	if ok {
 		copy(out[:], b)
@@ -108,12 +110,12 @@ func (t *Torrent) InfoHash() *[20]byte {
 	d, _ := t.Info()
 	data, err := bencode.Marshal(d)
 	if err != nil {
-		return nil
+		return out
 	}
 
 	hash := sha1.Sum(data)
 	t.dict.SetStringKey("info-hash", bencode.Bytes(hash[:]))
-	return &hash
+	return hash
 }
 
 // HexHash returns the hex-encoded SHA-1 hash of the

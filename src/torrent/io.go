@@ -20,11 +20,30 @@ func Load(location string) (*Torrent, error) {
 		return nil, errors.Wrap(err, op)
 	}
 
+	var t *Torrent
 	if url.Scheme == "magnet" {
-		return loadFromMagnetLink(url)
+		t, err = loadFromMagnetLink(url)
+		if err != nil {
+			return nil, errors.Wrap(err, op)
+		}
+	} else {
+		t, err = loadFromFile(location)
+		if err != nil {
+			return nil, errors.Wrap(err, op)
+		}
 	}
 
-	return loadFromFile(location)
+	// A zero-value indicates that the torrent does not have
+	// an info hash or, possibly, that it is incorrectly
+	// encoded and hence was not parsed properly. A torrent
+	// cannot be identified without a valid info hash and
+	// indicates an error
+	if t.InfoHash() == [20]byte{} {
+		err := errors.Newf("file at %s does not have a valid info hash", location)
+		return nil, errors.Wrap(err, op)
+	}
+
+	return t, nil
 }
 
 func loadFromMagnetLink(u *url.URL) (*Torrent, error) {

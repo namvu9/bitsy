@@ -1,10 +1,7 @@
 package messaging
 
 import (
-	"bytes"
-	"encoding/binary"
 	"fmt"
-	"io"
 	"net"
 	"time"
 
@@ -16,6 +13,11 @@ import (
 // Peer represents a connection to another peer in the
 // swarm
 type Peer struct {
+	closed bool
+
+	in  chan Message // in means send to peer, closed ch represents request to close conn
+	out chan Message // out means message (out) from peer, closed ch represents disconnected peer
+
 	net.Conn
 
 	// This peer has choked the client and should not be
@@ -39,6 +41,7 @@ type Peer struct {
 	UploadRate   int64
 	Uploaded     int64
 	DownloadRate int64
+	Downloaded   int64
 
 	// A bitfield specifying the indexes of the pieces that
 	// the peer has
@@ -50,6 +53,16 @@ type Peer struct {
 	// Pending request messages
 	// TODO: Remove these once fulfilled
 	requests []RequestMessage
+}
+
+func (p *Peer) Close() error {
+	if p.closed {
+		return nil
+	}
+
+	p.closed = true
+	//close(p.out)
+	return p.Conn.Close()
 }
 
 // TODO: TEST
@@ -68,131 +81,143 @@ func (p *Peer) Write(data []byte) (int, error) {
 	return n, nil
 }
 
+// Listen for incoming messages
+func (peer *Peer) Listen() {
+	peer.SetReadDeadline(time.Now().Add(30 * time.Second))
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("RECOVERED FROM", r)
+		}
+
+		err := peer.Close()
+		if err != nil {
+			log.Err(err).Msg("Failed to close peer")
+		}
+	}()
+
+	go func() {
+		msg, ok := <-peer.in
+		if !ok {
+			return
+		}
+
+		switch v := msg.(type) {
+		case RequestMessage:
+			fmt.Println("REQUESTING PIECE", v.Index, v.Offset)
+		}
+
+		_, err := peer.Write(msg.Bytes())
+		if err != nil {
+			//fmt.Println(err)
+			return
+		}
+	}()
+
+	for {
+		msg, err := UnmarshallMessage(peer.Conn)
+		if err != nil {
+			log.Err(err).Msgf("failed to unmarshall message from %s", peer.RemoteAddr())
+
+			return
+		}
+
+		switch v := msg.(type) {
+		case PieceMessage:
+			peer.Uploaded += int64(len(v.Piece))
+		}
+
+		go func() {
+			peer.out <- msg
+		}()
+	}
+}
+
+func (p *Peer) Send(msg Message) {
+	p.in <- msg
+}
+
+func (p *Peer) SendBitField(msg BitFieldMessage) {
+	p.in <- msg
+}
+
+func (p *Peer) RequestPiece(msg RequestMessage) {
+	p.ShowInterest()
+	go func() {
+		_, err := p.Write(msg.Bytes())
+		if err != nil {
+			//fmt.Println(err)
+			return
+		}
+	}()
+}
+
+func (p *Peer) ServePiece(msg PieceMessage) {
+	fmt.Println("Serving piece to", p.RemoteAddr())
+	p.in <- msg
+}
+
+func (p *Peer) ShowInterest() {
+	if p.Interesting {
+		return
+	}
+
+	p.Interesting = true
+
+	p.in <- InterestedMessage{}
+}
+
+func (p *Peer) NotInterested() {
+	if !p.Interesting {
+		return
+	}
+
+	p.Interesting = false
+	p.in <- NotInterestedMessage{}
+}
+
+func (p *Peer) Choke() {
+	if p.Choked {
+		return
+	}
+
+	p.in <- ChokeMessage{}
+	p.Choked = true
+}
+
 func (p *Peer) Unchoke() {
+	if !p.Choked {
+		return
+	}
+	p.in <- UnchokeMessage{}
 	p.Choked = false
 }
 
-// Listen for incoming messages
-func (c *Peer) Listen(handleMessage func(*Peer, []byte, error)) {
-	c.SetReadDeadline(time.Now().Add(30 * time.Second))
-	for {
-		buf := make([]byte, 4)
-		n, err := c.Read(buf)
-		if err != nil {
-			handleMessage(c, nil, err)
-			return
-		}
-
-		if n < 4 {
-			handleMessage(c, nil, io.EOF)
-			return
-		}
-
-		// Keep-alive - ignored
-		messageLength := binary.BigEndian.Uint32(buf)
-		if messageLength == 0 {
-			continue
-		}
-
-		if messageLength > 32*1024 {
-			log.Info().Msgf("%s Received packet of length: %d/%d, ignoring\n", c.RemoteAddr(), messageLength, len(buf))
-			handleMessage(c, nil, io.EOF)
-			return
-		}
-
-		buf = make([]byte, messageLength)
-		n, err = c.Read(buf)
-
-		if n < int(messageLength) {
-			firstPart := buf[:n]
-
-			time.Sleep(5 * time.Second)
-			buf = make([]byte, messageLength-uint32(n))
-			n, err := c.Read(buf)
-			if err != nil {
-				handleMessage(c, nil, err)
-				return
-			}
-
-			if uint32(n) != messageLength-uint32(len(firstPart)) {
-				continue
-			}
-
-			firstPart = append(firstPart, buf...)
-			handleMessage(c, firstPart, nil)
-			c.LastMessageReceived = time.Now()
-			continue
-		}
-
-		c.LastMessageReceived = time.Now()
-		handleMessage(c, buf, nil)
-	}
+func (p *Peer) IsBlocking() {
+	p.Blocking = true
 }
 
-// Handshake attempts to perform a handshake with the given
-// client at addr with infoHash.
-func Handshake(conn net.Conn, infoHash [20]byte, peerID [20]byte) (*Peer, error) {
-	fmt.Println("HANDSHAKE")
-	msg := HandShakeMessage{
-		infoHash: infoHash,
-		peerID:   peerID,
-	}
+func (p *Peer) NotBlocking() {
+	p.Blocking = false
+}
 
-	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	_, err := conn.Write(msg.Bytes())
-	if err != nil {
-		return nil, err
-	}
-
-	c := &Peer{
+func NewPeer(conn net.Conn) *Peer {
+	return &Peer{
 		Conn:                conn,
-		Choked:              true,
+		in:                  make(chan Message, 10),
+		out:                 make(chan Message, 10),
 		Blocking:            true,
+		Choked:              true,
 		LastMessageReceived: time.Now(),
 		LastMessageSent:     time.Now(),
 	}
-
-	return c, nil
 }
 
-func unmarshalHandshake(r io.Reader, m *HandShakeMessage) error {
-	var op errors.Op = "messaging.unmarshalHandshake"
-	var buf bytes.Buffer
-
-	n, err := io.CopyN(&buf, r, 68)
-	if err != nil {
-		return errors.Wrap(err, op, errors.IO)
+// best-guess, ignore write stream
+func isAlive(conn net.Conn) bool {
+	_, err := conn.Read([]byte{})
+	if err != nil && errors.IsEOF(err) {
+		return false
 	}
 
-	if n != 68 {
-		err := errors.Newf("expected handshake message of length %d but got %d", 68, n)
-		return errors.Wrap(err, op, errors.BadArgument)
-	}
-
-	data := buf.Bytes()
-
-	m.pStrLen = data[0]
-	m.pStr = data[1:20]
-
-	if n := copy(m.reserved[:], data[20:28]); n != 8 {
-		err := errors.Newf("Reserved bytes must be of length 8, got %d", n)
-		return errors.Wrap(err, op, errors.BadArgument)
-	}
-
-	//if (m.reserved[5] & 0x10) == 0x10 {
-	//fmt.Println("SUPPORTS EXTENSION PROTOCOL")
-	//} else {
-	//fmt.Println("DOES NOT SUPPORT EXTENSION PROTOCOL")
-	//}
-
-	if n := copy(m.infoHash[:], data[28:48]); n != 20 {
-		err := errors.Newf("Info hash must be of length 20, got %d", n)
-		return errors.Wrap(err, op, errors.BadArgument)
-	}
-
-	// TODO: PeerIDs are not returned by UDP trackers, which
-	// is currently not supported
-	//peerID := data[48:]
-
-	return nil
+	return true
 }

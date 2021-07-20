@@ -3,6 +3,7 @@ package errors
 import (
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -19,6 +20,7 @@ const (
 	IO               = 2
 	Network          = 3
 	BadArgument      = 4
+	EOF              = 5
 )
 
 func (k Kind) String() string {
@@ -99,4 +101,16 @@ func New(e string) error {
 
 func Newf(fmtStr string, args ...interface{}) error {
 	return fmt.Errorf(fmtStr, args...)
+}
+
+func IsEOF(e error) bool {
+	if err, ok := e.(Error); ok && err.kind == EOF {
+		return true
+	}
+
+	if e == io.EOF {
+		return true
+	}
+
+	return false
 }

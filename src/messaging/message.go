@@ -4,9 +4,15 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
+	"net"
 	"strings"
+	"time"
+
+	"github.com/namvu9/bitsy/src/errors"
 )
 
+// BitTorrent message types
 const (
 	Choke         byte = 0
 	Unchoke       byte = 1
@@ -115,7 +121,7 @@ func (m NotInterestedMessage) Bytes() []byte {
 // hash matches, it announces
 //that it has that piece to all of its peers.
 type HaveMessage struct {
-	Index int32
+	Index uint32
 }
 
 func (m HaveMessage) Bytes() []byte {
@@ -164,9 +170,9 @@ func (m BitFieldMessage) Bytes() []byte {
 // RequestMessage 'request' messages contain an index, begin, and length. The last two are byte offsets. Length is generally a power of two unless it gets truncated by the end of the file. All current implementations use 2^14 (16 kiB), and close connections which request an amount greater than that.
 // Should be 13 bytes
 type RequestMessage struct {
-	Index  int32 // piece index
-	Offset int32 // offset within the piece
-	Length int32 // 2^14 / 16 KiB
+	Index  uint32 // piece index
+	Offset uint32 // offset within the piece
+	Length uint32 // 2^14 / 16 KiB
 }
 
 func (m RequestMessage) Bytes() []byte {
@@ -183,8 +189,8 @@ func (m RequestMessage) Bytes() []byte {
 
 // PieceMessage contains piece (or sub-piece) data
 type PieceMessage struct {
-	Index  int32
-	Offset int32
+	Index  uint32
+	Offset uint32
 	Piece  []byte
 }
 
@@ -216,9 +222,9 @@ func (m PieceMessage) Bytes() []byte {
 // to everyone else every time a piece arrives.
 // TODO: Cancel pending requests for a subpiece/piece
 type CancelMessage struct {
-	Index  int32 // piece index
-	Offset int32 // offset within the piece
-	Length int32 // length of the sub-piece
+	Index  uint32 // piece index
+	Offset uint32 // offset within the piece
+	Length uint32 // length of the sub-piece
 }
 
 func (m CancelMessage) Bytes() []byte {
@@ -238,11 +244,198 @@ func (m CancelMessage) Bytes() []byte {
 type ExtendedMessage struct{}
 
 // TODO: Implement
-func (m ExtendedMessage) Payload() []byte {
+func (m ExtendedMessage) Bytes() []byte {
 	var buf bytes.Buffer
 
 	binary.Write(&buf, binary.BigEndian, int32(0))
 	buf.WriteByte(Extended)
 
 	return buf.Bytes()
+}
+
+// Handshake attempts to perform a handshake with the given
+// client at addr with infoHash.
+func Handshake(conn net.Conn, infoHash [20]byte, peerID [20]byte) (*Peer, error) {
+	msg := HandShakeMessage{
+		infoHash: infoHash,
+		peerID:   peerID,
+	}
+
+	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	_, err := conn.Write(msg.Bytes())
+	if err != nil {
+		return nil, err
+	}
+
+	return NewPeer(conn), nil
+}
+
+func unmarshalHandshake(r io.Reader, msg *HandShakeMessage) error {
+	var op errors.Op = "messaging.unmarshalHandshake"
+	var buf bytes.Buffer
+
+	n, err := io.CopyN(&buf, r, 68)
+	if err != nil {
+		return errors.Wrap(err, op, errors.IO)
+	}
+
+	if n != 68 {
+		err := errors.Newf("expected handshake message of length %d but got %d", 68, n)
+		return errors.Wrap(err, op, errors.BadArgument)
+	}
+
+	data := buf.Bytes()
+
+	msg.pStrLen = data[0]
+	msg.pStr = data[1:20]
+
+	if n := copy(msg.reserved[:], data[20:28]); n != 8 {
+		err := errors.Newf("Reserved bytes must be of length 8, got %d", n)
+		return errors.Wrap(err, op, errors.BadArgument)
+	}
+
+	//if (m.reserved[5] & 0x10) == 0x10 {
+	//fmt.Println("SUPPORTS EXTENSION PROTOCOL")
+	//} else {
+	//fmt.Println("DOES NOT SUPPORT EXTENSION PROTOCOL")
+	//}
+
+	if n := copy(msg.infoHash[:], data[28:48]); n != 20 {
+		err := errors.Newf("Info hash must be of length 20, got %d", n)
+		return errors.Wrap(err, op, errors.BadArgument)
+	}
+
+	// TODO: PeerIDs are not returned by UDP trackers, which
+	// is currently not supported
+	//peerID := data[48:]
+
+	return nil
+}
+
+func UnmarshallMessage(r io.ReadCloser) (Message, error) {
+	var op errors.Op = "messaging.UnmarshallMessage"
+
+	buf := make([]byte, 4)
+
+	_, err := r.Read(buf)
+	if err != nil {
+		return nil, errors.Wrap(err, op, errors.Network)
+	}
+
+	// Keep-alive - ignored
+	messageLength := binary.BigEndian.Uint32(buf)
+	if messageLength == 0 {
+		return KeepAliveMessage{}, nil
+	}
+
+	if messageLength > 32*1024 {
+		err := errors.Newf("Received packet of length: %x, ignoring\n", messageLength)
+		r.Close()
+		return nil, errors.Wrap(err, op, io.EOF)
+	}
+
+	buf = make([]byte, messageLength)
+	k := 0
+	for {
+		n, err := r.Read(buf[k:])
+		if err != nil {
+			return nil, errors.Wrap(err, op, errors.Network)
+		}
+
+		k += n
+		if k == int(messageLength) {
+			break
+		}
+	}
+
+	var (
+		messageType = buf[0]
+		payload     = buf[1:]
+	)
+
+	switch messageType {
+	case BitField:
+		return UnmarshallBitFieldMessage(payload)
+	case Choke:
+		return ChokeMessage{}, nil
+	case Unchoke:
+		return UnchokeMessage{}, nil
+	case Interested:
+		return InterestedMessage{}, nil
+	case NotInterested:
+		return NotInterestedMessage{}, nil
+	case Have:
+		return UnmarshalHaveMessage(payload)
+	case Request:
+		return UnmarshalRequestMessage(payload)
+	case Piece:
+		return UnmarshallPieceMessage(payload)
+	case Cancel:
+		return UnmarshalCancelMessage(payload)
+	case Extended:
+		return UnmarshalExtendedMessage(payload)
+	default:
+		return KeepAliveMessage{}, nil
+	}
+}
+
+// TODO: TESTS
+func UnmarshallBitFieldMessage(data []byte) (BitFieldMessage, error) {
+	// TODO: Check BitfieldLength
+	// if error, return EOF
+	return BitFieldMessage{data}, nil
+}
+func UnmarshalHaveMessage(data []byte) (HaveMessage, error) {
+	var msg HaveMessage
+
+	if len(data) != 4 {
+		err := errors.Newf("have message payload longer than 4: %d", len(data))
+		return msg, errors.Wrap(err, errors.BadArgument)
+	}
+
+	msg.Index = binary.BigEndian.Uint32(data)
+	return msg, nil
+}
+func UnmarshalRequestMessage(data []byte) (RequestMessage, error) {
+	var msg RequestMessage
+
+	if got := len(data); got != 12 {
+		err := errors.Newf("payload length, want %d but got %d", 12, got)
+		return msg, errors.Wrap(err, errors.BadArgument)
+	}
+
+	msg.Index = binary.BigEndian.Uint32(data[:4])
+	msg.Offset = binary.BigEndian.Uint32(data[4:8])
+	msg.Length = binary.BigEndian.Uint32(data[8:12])
+
+	return msg, nil
+}
+
+func UnmarshallPieceMessage(data []byte) (PieceMessage, error) {
+	var msg PieceMessage
+
+	msg.Index = binary.BigEndian.Uint32(data[:4])
+	msg.Offset = binary.BigEndian.Uint32(data[4:8])
+	msg.Piece = data[8:]
+
+	return msg, nil
+}
+
+func UnmarshalCancelMessage(data []byte) (CancelMessage, error) {
+	var msg CancelMessage
+
+	if got := len(data); got != 12 {
+		err := errors.Newf("payload length, want %d but got %d", 12, got)
+		return msg, errors.Wrap(err, errors.BadArgument)
+	}
+
+	msg.Index = binary.BigEndian.Uint32(data[:4])
+	msg.Offset = binary.BigEndian.Uint32(data[4:8])
+	msg.Length = binary.BigEndian.Uint32(data[8:12])
+
+	return msg, nil
+}
+func UnmarshalExtendedMessage(data []byte) (ExtendedMessage, error) {
+	var msg ExtendedMessage
+	return msg, nil
 }

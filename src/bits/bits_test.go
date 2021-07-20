@@ -9,8 +9,8 @@ import (
 func TestParseBitField(t *testing.T) {
 	bitField := byte(0b11001101)
 
-	got := bits.ParseBitField(0, bitField)
-	got2 := bits.ParseBitField(1, bitField)
+	got := bits.GetOnes(0, bitField)
+	got2 := bits.GetOnes(1, bitField)
 
 	want := []int{0, 1, 4, 5, 7}
 	want2 := []int{8, 9, 12, 13, 15}
@@ -62,7 +62,7 @@ func TestIndexSet(t *testing.T) {
 		},
 	} {
 
-		got := test.bitField.IsIndexSet(test.index)
+		got := test.bitField.Get(test.index)
 
 		if got != test.want {
 			t.Errorf("%d: Want %v got %v", i, test.want, got)
@@ -102,6 +102,33 @@ func TestGetMaxIndex(t *testing.T) {
 		if res != test.wantIdx {
 
 			t.Errorf("%d: Want %d got %d", i, test.wantIdx, res)
+		}
+	}
+}
+
+func TestNewBitField(t *testing.T) {
+	for i, test := range []struct {
+		bits int
+		want int // slice length
+	} {
+		{
+			bits: 80,
+			want: 10,
+		},
+		{
+			bits: 81,
+			want: 11,
+		},
+		{
+			bits: 79,
+			want: 10,
+		},
+	} {
+
+		bf := bits.NewBitField(test.bits)
+
+		if len(bf) != test.want {
+			t.Errorf("%d: Want %d got %d", i, test.want, len(bf))
 		}
 	}
 }

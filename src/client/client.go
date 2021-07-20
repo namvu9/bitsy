@@ -17,28 +17,62 @@ import (
 	"gitlab.com/NebulousLabs/go-upnp"
 )
 
-// Client represents an instance of the client and manages
+// TODO: Move listener here.
+// TODO: Call Announce from here
+// TODO: Swarms do not connect to peers, we do it here
+// instead and send the resulting peer connection to the
+// appropriate swarm
+// TODO: Single session main loop, only Session can modify
+// itself or call any methods that might modify it. There
+// should be no need for locks
+
+// TorrentID is the SHA-1 hash of the torrent's bencoded
+// info dictionary
+type TorrentID [20]byte
+
+type Trackers []tracker.TrackerStat
+
+// Revert to session
+// Session represents an instance of the client and manages
 // the client's state.
-type Client struct {
-	peerID   [20]byte
-	torrents []torrent.Torrent
+type Session struct {
+	// Stats
+	startedAt time.Time
+	conns     int
+
+	// state
+	swarms   map[TorrentID]*messaging.Swarm
+	torrents map[TorrentID]torrent.Torrent
+	trackers map[TorrentID][]Trackers
 
 	// Config
+	peerID      [20]byte
 	baseDir     string
 	downloadDir string
 	ip          string // The ip address to listen on
 	port        uint16 // the port to listen on
 	maxConns    int    // Max open peer connections
 
+	// TODO: REMOVE
 	preferredPorts []uint16
-
-	m         *messaging.Messenger
-	startedAt time.Time
+	m              *messaging.Messenger
 }
 
 type upnpRes struct {
 	externalIP string
 	port       int
+}
+
+func (c *Session) Stat() []string {
+	var sb strings.Builder
+
+	sb.WriteString("\n-----\nClient Stats\n-----\n")
+	sb.WriteString(fmt.Sprintf("Session Length: %s\n", time.Now().Sub(c.startedAt)))
+
+	var out []string
+	out = append(out, sb.String())
+	out = append(out, c.m.Stat()...)
+	return out
 }
 
 func forwardPorts(ports []uint16) (uint16, error) {
@@ -64,22 +98,8 @@ func forwardPorts(ports []uint16) (uint16, error) {
 	return 0, errors.Wrap(err, op, errors.Network)
 }
 
-func (c *Client) Stat() []string {
-	var sb strings.Builder
-
-	sb.WriteString("\n-----\nClient Stats\n-----\n")
-	sb.WriteString(fmt.Sprintf("Session Length: %s\n", time.Now().Sub(c.startedAt)))
-
-	var out []string
-	out = append(out, sb.String())
-	out = append(out, c.m.Stat()...)
-	return out
-}
-
-// Init initializes the client by starting its event loop
 // TODO: Break up this function a bit
-// TODO: Not really an event loop, though is it?
-func (c *Client) Init() (func() error, error) {
+func (c *Session) Init() (func() error, error) {
 	var op errors.Op = "(*Client).Init"
 
 	log.Info().
@@ -100,10 +120,11 @@ func (c *Client) Init() (func() error, error) {
 		return nil, errors.Wrap(err, op)
 	}
 
+	// TODO: Remove the gateways
 	var (
 		trackerGateway = gateway.New(c.maxConns)
-		swarmGateway   = gateway.New(c.maxConns)
-		m              = messaging.New(c.ip, c.port, &swarmGateway, c.peerID, c.downloadDir)
+		swarmGateway = gateway.New(c.maxConns)
+		m            = messaging.New(c.ip, c.port, &swarmGateway, c.peerID, c.downloadDir)
 	)
 
 	err = m.Listen()
@@ -115,9 +136,9 @@ func (c *Client) Init() (func() error, error) {
 
 	for _, torrent := range c.torrents {
 		tr := tracker.New(torrent, &trackerGateway, c.port, c.peerID)
-		out, in := tr.Listen()
+		stat, _ := tr.Listen()
 
-		m.AddSwarm(&torrent, out, in)
+		m.AddSwarm(&torrent, stat)
 	}
 
 	var (
@@ -143,7 +164,7 @@ func (c *Client) Init() (func() error, error) {
 
 // NewTorrent loads a torrent into the current session and
 // writes it to disk
-func (c *Client) NewTorrent(location string) error {
+func (c *Session) NewTorrent(location string) error {
 	var op errors.Op = "(*Client).NewTorrent"
 
 	t, err := c.LoadTorrent(location)
@@ -164,7 +185,7 @@ func (c *Client) NewTorrent(location string) error {
 
 // LoadTorrent loads a torrent either from a torrent file on
 // disk or a magnet link
-func (c *Client) LoadTorrent(location string) (*torrent.Torrent, error) {
+func (c *Session) LoadTorrent(location string) (*torrent.Torrent, error) {
 	var op errors.Op = "(*Client).LoadTorrent"
 
 	t, err := torrent.Load(location)
@@ -174,29 +195,23 @@ func (c *Client) LoadTorrent(location string) (*torrent.Torrent, error) {
 
 	log.Printf("Loaded %s", t.Name())
 
-	// The torrent cannot be identified without an info hash
-	hash := t.InfoHash()
-	if hash == nil {
-		err := fmt.Errorf("torrent %s has no info hash", t.Name())
-		return nil, errors.Wrap(err, op)
-	}
-
-	c.torrents = append(c.torrents, *t)
+	c.torrents[t.InfoHash()] = *t
 
 	return t, nil
 }
 
-func New(cfg Config) *Client {
+func New(cfg Config) *Session {
 	// TODO: Generate a proper peerID. This is the peerID used
 	// by the 'Transmission' BitTorrent client
 	peerID := [20]byte{0x2d, 0x54, 0x52, 0x33, 0x30, 0x30, 0x30, 0x2d, 0x6c, 0x62, 0x76, 0x30, 0x65, 0x65, 0x75, 0x35, 0x34, 0x31, 0x36, 0x37}
 
-	c := &Client{
+	c := &Session{
 		baseDir:        cfg.BaseDir,
 		downloadDir:    cfg.DownloadDir,
 		maxConns:       cfg.MaxConnections,
 		peerID:         peerID,
 		preferredPorts: cfg.Port,
+		torrents:       make(map[TorrentID]torrent.Torrent),
 	}
 
 	if cfg.IP == "" {
@@ -208,7 +223,7 @@ func New(cfg Config) *Client {
 	return c
 }
 
-func (c *Client) loadTorrents() error {
+func (c *Session) loadTorrents() error {
 	var op errors.Op = "(*Client).loadTorrents"
 
 	files, err := ioutil.ReadDir(c.baseDir)
@@ -240,3 +255,50 @@ func (c *Client) loadTorrents() error {
 
 	return nil
 }
+
+// TODO: Announce from session
+// Send results to s.peerCh
+//case announce := <-s.announceCh:
+//s.leechers = int(announce.NLeechers)
+//s.seeders = int(announce.NSeeders)
+
+//var peers []tracker.PeerInfo
+//for _, peer := range announce.Peers {
+//if peer.IP.IsUnspecified() {
+//continue
+//}
+
+//peers = append(peers, peer)
+//}
+
+//s.peerInfo = append(s.peerInfo, peers...)
+// TODO: Do this at session-level
+// TODO: Connect to multiple new peers
+//func (s *Swarm) connectNewPeer() error {
+//var op errors.Op = "(*Swarm).connectNewPeer"
+
+//if len(s.peerInfo) > 0 {
+//peerInfo := s.peerInfo[0]
+//s.peerInfo = s.peerInfo[1:]
+
+//addr := fmt.Sprintf("%s:%d", peerInfo.IP, peerInfo.Port)
+
+//log.Info().Str("op", op.String()).Msgf("Initiating connection to %s\n", addr)
+
+//conn, err := s.d.Dial("tcp", addr)
+//if err != nil {
+//return errors.Wrap(err, op, errors.Network)
+//}
+
+//peerConn, err := Handshake(conn, s.InfoHash(), s.peerID)
+//if err != nil {
+//return errors.Wrap(err, op, errors.Network)
+//}
+
+//s.peerCh <- peerConn
+
+//log.Info().Str("op", op.String()).Msgf("Connected to %s\n", peerConn.RemoteAddr())
+//}
+
+//return nil
+//}

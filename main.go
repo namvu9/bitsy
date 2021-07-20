@@ -2,9 +2,7 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"os"
-	"time"
 
 	"github.com/namvu9/bitsy/src/client"
 	"github.com/rs/zerolog"
@@ -36,14 +34,15 @@ func main() {
 		log.Error().Msg(err.Error())
 		os.Exit(1)
 	}
+	for{}
 
-	ticker := time.NewTicker(10 * time.Second)
-	for {
-		<-ticker.C
+	//ticker := time.NewTicker(10 * time.Second)
+	//for {
+		//<-ticker.C
 		//cmd := exec.Command("clear") //Linux example, its tested
 		//cmd.Stdout = os.Stdout
 		//cmd.Run()
-		stat := s.Stat()
-		fmt.Println(stat)
-	}
+		//stat := s.Stat()
+		//fmt.Println(stat)
+	//}
 }
