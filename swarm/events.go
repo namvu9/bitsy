@@ -20,63 +20,67 @@ type Subscriber interface {
 type Event interface{}
 
 type JoinEvent struct {
-	Peer
+	*Peer
 }
 
 type LeaveEvent struct {
-	Peer
+	*Peer
 }
 
 type MessageReceived struct {
 	btorrent.Message
-	Peer
+	*Peer
+}
+type MessageSent struct {
+	btorrent.Message
+	*Peer
 }
 
 type InterestedEvent struct {
-	Peer
+	*Peer
 	btorrent.Message
 }
 
 type InterestingEvent struct {
-	Peer
+	*Peer
 	btorrent.Message
 }
 
 // BlockedEvent represents the peer choking the client
 type BlockedEvent struct {
-	By Peer
+	By *Peer
 	btorrent.Message
 }
 
 // ChokeEvent represents the client choking the given peer
 type ChokeEvent struct {
-	Peer
+	*Peer
 	btorrent.Message
 }
 
 type UnchokeEvent struct {
-	Peer
+	*Peer
 	btorrent.Message
 }
 
 type DataReceivedEvent struct {
 	btorrent.PieceMessage
-	Sender Peer
+	Sender *Peer
 }
 
 type DataSentEvent struct {
 	btorrent.PieceMessage
-	Receiver Peer
+	Receiver *Peer
 }
 
 type DataRequestEvent struct {
 	btorrent.RequestMessage
-	Sender Peer
+	Sender *Peer
 }
 
 type BitFieldEvent struct {
 	btorrent.BitFieldMessage
-	Sender Peer
+	Sender *Peer
 }
 
 type DownloadCompleteEvent struct {
@@ -112,32 +116,39 @@ type BroadcastRequest struct {
 func (s *Swarm) handleEvent(e Event) (bool, error) {
 	switch v := e.(type) {
 	case JoinEvent:
-		return s.addPeer(&v.Peer)
+		return s.addPeer(v.Peer)
 	case LeaveEvent:
-		return s.removePeer(&v.Peer)
-	case InterestingEvent:
-		return s.handleInterestingEvent(v)
-	case ChokeEvent:
-		return s.handleChokeEvent(v)
-	case UnchokeEvent:
-		return s.handleUnchokeEvent(v)
-	case BitFieldEvent:
-		return s.handleBitfieldMessage(v)
+		return s.removePeer(v.Peer)
 	case DownloadCompleteEvent:
 		return s.handleDownloadCompleteEvent(v)
-	case DataRequestEvent:
-		return s.handleDataRequestEvent(v)
 	case BroadcastRequest:
 		return s.handleBroadcastRequest(v)
+	case MessageReceived:
+		return s.handleMessageReceived(v)
 	}
 
 	return true, nil
 }
 
-func (s *Swarm) handleDataRequestEvent(e DataRequestEvent) (bool, error) {
+func (s *Swarm) handleMessageReceived(msg MessageReceived) (bool, error) {
+	switch v := msg.Message.(type) {
+	case btorrent.RequestMessage:
+		return s.handleDataRequestEvent(v, msg.Peer)
+	case btorrent.BitFieldMessage:
+		return s.handleBitfieldMessage(v, msg.Peer)
+	case btorrent.HaveMessage:
+		return s.handleHaveMessage(v, msg.Peer)
+	case btorrent.PieceMessage:
+		go func() {
+			s.downloadCh <- v
+		}()
+
+	}
+	return true, nil
+}
+
+func (s *Swarm) handleDataRequestEvent(req btorrent.RequestMessage, peer *Peer) (bool, error) {
 	var (
-		req      = e.RequestMessage
-		peer     = e.Sender
 		filePath = path.Join(s.baseDir, s.HexHash(), fmt.Sprintf("%d.part", req.Index))
 	)
 
@@ -156,23 +167,22 @@ func (s *Swarm) handleDataRequestEvent(e DataRequestEvent) (bool, error) {
 		Piece:  data,
 	}
 
-	peer.Send(msg)
+	go peer.Send(msg)
 
 	return true, nil
 }
 
 func (s *Swarm) handleDownloadCompleteEvent(e DownloadCompleteEvent) (bool, error) {
 	s.have.Set(int(e.Index))
-	go s.broadcastEvent(BroadcastRequest{
+	go s.publish(BroadcastRequest{
 		Message: btorrent.HaveMessage{Index: e.Index},
 	})
+
 	return true, nil
 }
 
-func (s *Swarm) handleBitfieldMessage(e BitFieldEvent) (bool, error) {
+func (s *Swarm) handleBitfieldMessage(e btorrent.BitFieldMessage, peer *Peer) (bool, error) {
 	var op errors.Op = "(*Swarm).handleBitfieldMessage"
-	msg := e.BitFieldMessage
-	peer := e.Sender
 
 	log.Info().
 		Str("torrent", s.HexHash()).
@@ -180,7 +190,7 @@ func (s *Swarm) handleBitfieldMessage(e BitFieldEvent) (bool, error) {
 		Msgf("Received BitField message from %s", peer.RemoteAddr())
 
 	var (
-		maxIndex = bits.GetMaxIndex(msg.BitField)
+		maxIndex = bits.GetMaxIndex(e.BitField)
 		pieces   = s.Pieces()
 	)
 
@@ -191,18 +201,23 @@ func (s *Swarm) handleBitfieldMessage(e BitFieldEvent) (bool, error) {
 
 	for i := range pieces {
 		if !s.have.Get(i) && bits.BitField(e.BitField).Get(i) {
-			go func() {
-				s.broadcastEvent(InterestingEvent{
-					Peer:    peer,
-					Message: btorrent.InterestedMessage{},
-				})
-			}()
+			go peer.Send(btorrent.InterestedMessage{})
 
 			return false, nil
 		}
 	}
 
 	return false, nil
+}
+
+func (s *Swarm) handleHaveMessage(msg btorrent.HaveMessage, peer *Peer) (bool, error) {
+	if !s.have.Get(int(msg.Index)) {
+		go peer.Send(btorrent.InterestedMessage{})
+
+		return false, nil
+	}
+
+	return true, nil
 }
 
 func (s *Swarm) getPeer(addr net.Addr) (*Peer, bool) {
@@ -255,16 +270,19 @@ func (s *Swarm) handleInterestingEvent(e InterestingEvent) (bool, error) {
 }
 
 func (s *Swarm) handleBroadcastRequest(req BroadcastRequest) (bool, error) {
-	log.Print("BROADCATING", req)
 	go func() {
+		count := 0
 		for i, peer := range s.peers {
 			if req.Limit > 0 && i == req.Limit {
 				break
 			}
 
-			if req.Filter != nil && req.Filter(peer) {
-				peer.Send(req.Message)
+			if req.Filter != nil && !req.Filter(peer) {
+				break
 			}
+
+			count++
+			go peer.Send(req.Message)
 		}
 	}()
 

@@ -48,18 +48,64 @@ type Peer struct {
 	LastMessageReceived time.Time
 	LastMessageSent     time.Time
 
-	// Pending request messages
-	// TODO: Remove these once fulfilled
 	requests []btorrent.RequestMessage
+
+	closed bool
+}
+
+func (p *Peer) Close() error {
+	p.closed = true
+	return p.Conn.Close()
+}
+
+func (p *Peer) isServing(index uint32, offset uint32) bool {
+	for _, req := range p.requests {
+		if req.Index == index && req.Offset == offset {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (p *Peer) Send(msg btorrent.Message) error {
+	if p.closed {
+		return nil
+	}
+
+	if req, ok := msg.(btorrent.RequestMessage); ok {
+		if p.Blocking || !p.has(int(req.Index)) || p.isServing(req.Index, req.Offset) {
+			return nil
+		}
+
+	}
+
 	_, err := p.Write(msg.Bytes())
 	if err != nil {
 		return err
 	}
 
+	switch msg.(type) {
+	case btorrent.UnchokeMessage:
+		p.Choked = false
+	case btorrent.ChokeMessage:
+		p.Choked = true
+	case btorrent.InterestedMessage:
+		p.Interesting = true
+	case btorrent.NotInterestedMessage:
+		p.Interesting = false
+	}
+
+	go p.publish(MessageSent{
+		Message: msg,
+		Peer:    p,
+	})
+
 	return nil
+}
+
+func (p *Peer) Idle() bool {
+	return time.Now().Sub(p.LastMessageReceived) > 2*time.Minute
 }
 
 func (p *Peer) Subscribe(out chan Event) chan Event {
@@ -86,16 +132,24 @@ func (peer *Peer) publish(e Event) {
 	peer.out <- e
 }
 
+func (peer *Peer) has(index int) bool {
+	return peer.BitField.Get(index)
+}
+
 // Listen for incoming messages
 func (peer *Peer) Listen() {
 	for {
 		msg, err := btorrent.UnmarshallMessage(peer.Conn)
+		peer.LastMessageReceived = time.Now()
+
 		if err != nil {
-			log.Err(err).Msgf("failed to unmarshall message from %s", peer.RemoteAddr())
+			log.Err(err).Msgf("failed to unmarshal message from %s", peer.RemoteAddr())
 			return
 		}
 
 		switch v := msg.(type) {
+		case btorrent.HaveMessage:
+			peer.BitField.Set(int(v.Index))
 		case btorrent.PieceMessage:
 			peer.Uploaded += int64(len(v.Piece))
 		case btorrent.ChokeMessage:
@@ -111,20 +165,14 @@ func (peer *Peer) Listen() {
 		}
 
 		go peer.publish(MessageReceived{
-			Peer:    *peer,
+			Peer:    peer,
 			Message: msg,
 		})
 	}
 }
 
-//func (p *Peer) handleHaveMessage(msg HaveMessage) {
-	//if !s.have.Get(int(msg.Index)) && !p.Blocking {
-		//p.ShowInterest()
-	//}
-//}
-
-func NewPeer(conn net.Conn) Peer {
-	peer := Peer{
+func NewPeer(conn net.Conn) *Peer {
+	peer := &Peer{
 		Conn:                conn,
 		Blocking:            true,
 		Choked:              true,

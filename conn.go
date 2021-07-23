@@ -14,6 +14,8 @@ import (
 
 type TimeoutErr error
 
+// BoundedNet limits the number of open connections and
+// satisfies and wraps the net.Dial and net.Listen functions
 type BoundedNet struct {
 	maxConns int
 	nConns   int
@@ -36,8 +38,9 @@ func (bn *BoundedNet) Listen(network, addr string) (net.Listener, error) {
 	}
 
 	return BoundedListener{
-		listener,
-		bn.openCh,
+		Listener: listener,
+		openCh:   bn.openCh,
+		closeCh:  bn.closeCh,
 	}, nil
 }
 
@@ -65,7 +68,7 @@ type ListenFunc func(string, string) (net.Listener, error)
 func NewBoundedNet(max int) BoundedNet {
 	bn := BoundedNet{
 		openCh:  make(chan struct{}, max),
-		closeCh: make(chan struct{}),
+		closeCh: make(chan struct{}, max),
 		done:    make(chan struct{}),
 	}
 
@@ -95,13 +98,19 @@ func (c Conn) Close() error {
 
 type BoundedListener struct {
 	net.Listener
-	openCh chan struct{}
+	openCh  chan struct{}
+	closeCh chan struct{}
 }
 
 func (bl BoundedListener) Accept() (net.Conn, error) {
 	bl.openCh <- struct{}{}
 
-	return bl.Listener.Accept()
+	conn, err := bl.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+
+	return Conn{conn, bl.closeCh}, nil
 }
 
 type upnpRes struct {

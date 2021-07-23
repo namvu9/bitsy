@@ -1,90 +1,243 @@
 package tracker_test
 
 import (
+	"bytes"
+	"encoding/binary"
+	"math/rand"
 	"net"
+	"net/url"
+	"testing"
 	"time"
+
+	"github.com/namvu9/bitsy/pkg/bencode"
+	"github.com/namvu9/bitsy/pkg/btorrent"
+	"github.com/namvu9/bitsy/tracker"
 )
 
-type NetConnMock struct {
-	values map[string]interface{}
+func CreateAnnounceList(tiers ...[]string) bencode.List {
+	var out bencode.List
+	for _, tier := range tiers {
+		var tierList bencode.List
 
-	writeFn func(NetConnMock, []byte) (int, error)
-	readFn  func(NetConnMock, []byte) (int, error)
-}
+		for _, url := range tier {
+			tierList = append(tierList, bencode.Bytes(url))
+		}
 
-func (mock NetConnMock) Close() error { return nil }
-func (mock NetConnMock) Write(src []byte) (int, error) {
-	if mock.writeFn != nil {
-		return mock.writeFn(mock, src)
+		out = append(out, tierList)
 	}
 
-	return 0, nil
+	return out
 }
-func (mock NetConnMock) Read(b []byte) (int, error) {
-	if mock.readFn != nil {
-		return mock.readFn(mock, b)
+
+func LoadMockTorrent(t *testing.T) *btorrent.Torrent {
+	t.Helper()
+	path := "../testdata/torrents/mock.torrent"
+
+	flag := true
+	if flag {
+		torrent := btorrent.New()
+
+		torrent.Dict().SetStringKey("announce-list", CreateAnnounceList(
+			[]string{
+				"udp://localhost:8888/announce",
+				"udp://localhost:8888/announce",
+				"udp://localhost:8888/announce",
+				"udp://localhost:8888/announce",
+				"udp://localhost:8888/announce",
+			},
+			[]string{"udp://awesometracker:9090/announce"},
+			[]string{"udp://awesometracker:9090/announce"},
+			[]string{"udp://awesometracker:9090/announce"},
+			[]string{"udp://awesometracker:9090/announce"},
+			[]string{"udp://awesometracker:9090/announce"},
+		))
+
+		err := btorrent.Save(path, torrent)
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	return 0, nil
+	torr, err := btorrent.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return torr
 }
-func (mock NetConnMock) LocalAddr() net.Addr                   { return &net.IPAddr{} }
-func (mock NetConnMock) RemoteAddr() net.Addr                  { return &net.IPAddr{} }
-func (mock NetConnMock) SetDeadline(time.Time) error           { return nil }
-func (mock NetConnMock) SetReadDeadline(time.Time) error       { return nil }
-func (mock NetConnMock) SetWriteDeadline(time.Time) error      { return nil }
-func (mock NetConnMock) Dial(string, string) (net.Conn, error) { return mock, nil }
-func (mock NetConnMock) CanDial() bool                         { return true }
 
-//func TestUDPConnect(t *testing.T) {
-	//input := "udp://tracker.opentrackr.org:1337"
-	//url, _ := url.Parse(input)
+type MockTracker struct {
+	t           *testing.T
+	connections map[uint64]bool
+	conn        net.PacketConn
 
-	//connID, err := tracker.UDPConnect(url, d)
+	stopCh chan interface{}
+}
 
-	//if err != nil {
-		//t.Fatal(err)
-	//}
+func (tr *MockTracker) Stop() {
+	tr.stopCh <- nil
+}
 
-	//if connID != 1337 {
-		//t.Errorf("Want connID=%d got=%d", 1337, connID)
-	//}
+func (tr *MockTracker) Serve(data []byte, addr net.Addr) {
+	connID := binary.BigEndian.Uint64(data[:8])
+	if _, ok := tr.connections[connID]; !ok {
+		tr.t.Fatal("UNRECOGNIZED CONNID")
+	}
 
-//}
+	var (
+		action = binary.BigEndian.Uint32(data[8:12])
+		txID   = binary.BigEndian.Uint32(data[12:16])
+	)
 
-//func TestUDPAnnounce(t *testing.T) {
-//input := "udp://tracker.opentrackr.org:1337"
-//url, _ := url.Parse(input)
+	switch action {
+	case tracker.CONNECT:
+		var buf bytes.Buffer
 
-//connID, err := tracker.UDPConnect(url, tracker.DialFunc(net.Dial))
-//if err != nil {
-//t.Fatal(err)
-//}
+		connID := uint64(rand.Uint32())
+		resp := tracker.ConnMessage{
+			Action: tracker.CONNECT,
+			TxID:   txID,
+			ConnID: connID,
+		}
 
-//fmt.Println("CONNECTED", connID)
+		tr.connections[connID] = true
+		err := binary.Write(&buf, binary.BigEndian, resp)
+		if err != nil {
+			tr.t.Fatal(err)
+		}
 
-//var hash [20]byte
-//hashBytes, _ := hex.DecodeString("e096a53d5ce9ef53c7d5c47b9086833b1e8a1778")
-//copy(hash[:], hashBytes)
+		tr.conn.WriteTo(buf.Bytes(), addr)
+	case tracker.ANNOUNCE:
+		resp := tracker.Response{
+			Action:    tracker.ANNOUNCE,
+			TxID:      txID,
+			Interval:  123123,
+			NLeechers: 3,
+			NSeeders:  1,
+			Peers: []tracker.PeerInfo{
+				{
+					IP:   net.IPv4(192, 168, 0, 1),
+					Port: 8080,
+				},
+				{
+					IP:   net.IPv4(192, 168, 0, 2),
+					Port: 8888,
+				},
+			},
+		}
 
-//req := tracker.NewUDPAnnounceReq(hash, connID, 6991)
+		tr.conn.WriteTo(resp.Bytes(), addr)
+	}
+}
 
-//resp, err := tracker.UDPAnnounce(url, req)
-//if err != nil {
-//t.Fatal(err)
-//}
+func (tr *MockTracker) Listen(t *testing.T, nReq int) {
+	t.Helper()
 
-//fmt.Printf("ANNOUNCED: %+v\n", resp)
-//}
+	tr.t = t
+	tr.connections = map[uint64]bool{
+		tracker.UDP_PROTOCOL_ID: true,
+	}
 
-//func TestTrackerGroup(t *testing.T) {
-	//url := `magnet:?xt=urn:btih:e096a53d5ce9ef53c7d5c47b9086833b1e8a1778&dn=%5BTorrentCouch.com%5D.Silicon.Valley.S05.Complete.720p.BRRip.x264.ESubs.%5B1.6GB%5D.%5BSeason.5.Full%5D&tr=udp%3A%2F%2Ftracker.coppersurfer.tk%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337&tr=udp%3A%2F%2Fmovies.zsw.ca%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.dler.org%3A6969%2Fannounce&tr=udp%3A%2F%2Fopentracker.i2p.rocks%3A6969%2Fannounce&tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&tr=udp%3A%2F%2Ftracker.0x.tf%3A6969%2Fannounce`
-	//torr, err := torrent.Load(url)
-	//if err != nil {
-		//t.Fatal(err)
-	//}
+	conn, err := net.ListenPacket("udp", ":8888")
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	//trg := tracker.New(*torr, nil)
-	//ch := trg.Listen()
+	conn.SetDeadline(time.Now().Add(2 * time.Second))
+	tr.conn = conn
 
-	//resp := <-ch
-//}
+	buf := make([]byte, 1024)
+	for {
+		select {
+		case <-tr.stopCh:
+			conn.Close()
+			return
+		default:
+			n, addr, err := conn.ReadFrom(buf)
+			if err != nil {
+				conn.Close()
+				return
+			}
+
+			tr.Serve(buf[:n], addr)
+			buf = make([]byte, 1024)
+		}
+	}
+}
+
+func NewMockTracker() *MockTracker {
+	return &MockTracker{
+		stopCh: make(chan interface{}, 2),
+	}
+}
+
+func TestTracker(t *testing.T) {
+	server := NewMockTracker()
+	defer server.Stop()
+	go server.Listen(t, 100)
+
+	t.Run("UDPAnnounce", func(t *testing.T) {
+
+		url, err := url.Parse("udp://localhost:8888/announce")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var hash, peerID [20]byte
+
+		tr := tracker.UDPTracker{URL: url}
+		if !tr.ShouldAnnounce() {
+			t.Error("ShouldAnnounce should return true before first announce")
+		}
+
+		res, err := tr.Announce(tracker.Request{
+			Hash:       hash,
+			PeerID:     peerID,
+			Downloaded: 0,
+			Uploaded:   1,
+			Port:       6999,
+		})
+
+		if err != nil {
+			t.Error(err)
+		}
+
+		if got, want := res.Interval, 123123; got != uint32(want) {
+			t.Errorf("Interval, want %d got %d", want, got)
+		}
+
+		if got, want := res.NLeechers, 3; got != uint32(want) {
+			t.Errorf("Interval, want %d got %d", want, got)
+		}
+
+		if got, want := res.NSeeders, 1; got != uint32(want) {
+			t.Errorf("Interval, want %d got %d", want, got)
+		}
+
+		if got, want := len(res.Peers), 2; got != want {
+			t.Errorf("Want %d peer, got %d", want, got)
+		}
+
+		if tr.ShouldAnnounce() {
+			t.Error("ShouldAnnounce should return false")
+		}
+	})
+
+	t.Run("TrackerGroup", func(t *testing.T) {
+		var hash, peerID [20]byte
+		hash[0] = 19
+		peerID[0] = 20
+		tr := tracker.New(*LoadMockTorrent(t), 6881, peerID)
+
+		res := tr.Announce(tracker.Request{
+			Hash:   hash,
+			PeerID: peerID,
+		})
+
+		// 2 peers x 5 trackers
+		if got := len(res); got != 10 {
+			t.Errorf("Expected %d, got %d", 3, got)
+		}
+	})
+
+}

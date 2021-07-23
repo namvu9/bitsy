@@ -2,9 +2,8 @@ package bitsy
 
 type Config struct {
 	BaseDir        string
-	DownloadDir    string
+	DownloadDir    string // Where to write the completed files to
 	MaxConnections int
-	NatPMP         bool
 	IP             string
 
 	// The specified ports will be tried in order. The first

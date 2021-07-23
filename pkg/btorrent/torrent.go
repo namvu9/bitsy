@@ -43,10 +43,10 @@ func (t *Torrent) Stat() map[string]interface{} {
 		fileStat["length"] = file.Length
 		fileStat["path"] = file.Path
 
-		var pieces []string
-		for _, piece := range file.Pieces {
-			pieces = append(pieces, hex.EncodeToString(piece))
-		}
+		//var pieces []string
+		//for _, piece := range file.Pieces {
+		//pieces = append(pieces, hex.EncodeToString(piece))
+		//}
 		//fileStat["pieces"] = pieces
 
 		fileStats = append(fileStats, fileStat)
@@ -114,7 +114,13 @@ func (t *Torrent) PieceLength() uint64 {
 	return uint64(pieceLength)
 }
 
-// Pieces returns the s
+type PieceHash []byte
+
+// TODO: TEST
+// Pieces returns the hashes of the pieces that constitute
+// the data identified by the torrent. Each piece is a
+// 20-byte SHA-1 hash of a block of data defined by the
+// value of the torrent's "piece length" field.
 func (t *Torrent) Pieces() [][]byte {
 	info, ok := t.Info()
 	if !ok {
@@ -296,14 +302,7 @@ func (t *Torrent) Files() ([]File, error) {
 		return out, fmt.Errorf("field piece length does not exist or is incorrectly encoded")
 	}
 
-	piecesBytes, ok := info.GetBytes("pieces")
-	if !ok {
-		return out, fmt.Errorf("field 'pieces' does not exist or is incorrectly encoded")
-	}
-
-	// Group pieces according to piece length
-	pieces := GroupBytes(piecesBytes, 20) // SHA1 hash
-
+	pieces := t.Pieces()
 	files, ok := info.GetList("files")
 	if !ok {
 		fileLength, _ := info.GetInteger("length")
@@ -501,6 +500,7 @@ func loadFromFile(path string) (*Torrent, error) {
 	return t, nil
 }
 
+// TODO: Validate torrent
 func Save(path string, t *Torrent) error {
 	var op errors.Op = "torrent.Save"
 
@@ -558,4 +558,10 @@ func LoadDir(dir string) ([]*Torrent, error) {
 	}
 
 	return out, nil
+}
+
+func New() *Torrent {
+	return &Torrent{
+		&bencode.Dictionary{},
+	}
 }

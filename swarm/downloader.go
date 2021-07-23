@@ -10,18 +10,32 @@ import (
 // DownloadPieece spawns a worker that manages requesting
 // subpieces from peers and will retransmit requests if the
 // download begins to stall
-func (s *Swarm) DownloadPiece(index int, peers []Peer) *Worker {
+// out = broadcast channel
+// done = downloaded piece
+func (s *Swarm) DownloadPiece(index uint32, done chan DownloadCompleteEvent, out chan Event) *Worker {
+
+	var (
+		size        = s.Length()
+		pieceLength = s.PieceLength()
+	)
+
+	if int(index) == len(s.Pieces())-1 {
+		pieceLength = uint64(size) % pieceLength
+	}
+
 	return &Worker{
 		Started:      time.Now(),
 		LastModified: time.Now(),
 
 		timeout: 5 * time.Minute,
 		stop:    make(chan struct{}),
-		done:    make(chan Event),
-		in:      make(chan Event, 32),
+		out:     out,
+		done:    done,
+		in:      make(chan btorrent.PieceMessage, 32),
 
+		index:       index,
 		hash:        s.Pieces()[index],
-		pieceLength: s.PieceLength(),
+		pieceLength: pieceLength,
 		subpieces:   map[uint32][]byte{},
 	}
 }
@@ -44,9 +58,10 @@ type Worker struct {
 
 	timeout time.Duration
 
+	out  chan Event
 	stop chan struct{}
-	done chan Event
-	in   chan Event
+	done chan DownloadCompleteEvent
+	in   chan btorrent.PieceMessage
 
 	index uint32
 
@@ -57,50 +72,41 @@ type Worker struct {
 }
 
 func (w *Worker) Idle() bool {
-	return time.Now().Sub(w.LastModified) > 20*time.Second
+	return time.Now().Sub(w.LastModified) > 5*time.Second
 }
 
 func (w *Worker) Dead() bool {
 	return time.Now().Sub(w.LastModified) > time.Minute
 }
 
-func (w *Worker) Restart(peers []Peer) {
-	for _, peer := range peers {
-		go w.RequestPiece(uint32(w.index), peer)
-	}
+func (w *Worker) Restart() {
+	w.LastModified = time.Now()
+	w.RequestPiece(uint32(w.index))
 }
 
 func (w *Worker) Progress() float32 {
 	return float32(len(w.subpieces)*LenSubpiece) / float32(w.pieceLength)
 }
 
-func (w *Worker) Run(peers []Peer) {
-	for _, peer := range peers {
-		go w.RequestPiece(w.index, peer)
-	}
+func (w *Worker) Run() {
+	now := time.Now()
+
+	go w.RequestPiece(w.index)
 
 	go func() {
 		for {
 			select {
-			case <-time.After(w.timeout):
-				return
-			case event := <-w.in:
-				switch v := event.(type) {
-				case DataReceivedEvent:
-					if _, ok := w.subpieces[v.Offset]; !ok {
-						w.subpieces[v.Offset] = v.Piece
-						w.LastModified = time.Now()
-					}
+			case msg := <-w.in:
+				w.LastModified = time.Now()
+				w.subpieces[msg.Offset] = msg.Piece
 
-					if w.IsComplete() {
-						data := w.Bytes()
-						w.done <- DownloadCompleteEvent{
-							Data:  data,
-							Index: w.index,
-							Duration: time.Now().Sub(w.Started),
-						}
+				if w.IsComplete() {
+					data := w.Bytes()
+					w.done <- DownloadCompleteEvent{
+						Data:     data,
+						Index:    w.index,
+						Duration: time.Now().Sub(now),
 					}
-
 					return
 				}
 			}
@@ -108,7 +114,6 @@ func (w *Worker) Run(peers []Peer) {
 		}
 
 	}()
-
 }
 
 func (w *Worker) IsComplete() bool {
@@ -127,15 +132,20 @@ func (w *Worker) Bytes() []byte {
 		copy(buf[offset:int(offset)+len(piece)], piece)
 	}
 
-	return nil
+	return buf
 }
 
-func (w *Worker) RequestPiece(index uint32, p Peer) error {
+func (w *Worker) RequestPiece(index uint32) error {
 	var op errors.Op = "(*Swarm).RequestPiece"
 	var subPieceLength = 16 * 1024
 
 	for offset := uint32(0); offset < uint32(w.pieceLength); offset += uint32(subPieceLength) {
-		err := w.requestSubPiece(index, offset, p)
+		// Only request subpieces the worker doesn't already have
+		if _, ok := w.subpieces[offset]; ok {
+			continue
+		}
+
+		err := w.requestSubPiece(index, offset)
 		if err != nil {
 			return errors.Wrap(err, op)
 		}
@@ -144,7 +154,7 @@ func (w *Worker) RequestPiece(index uint32, p Peer) error {
 	return nil
 }
 
-func (w *Worker) requestSubPiece(index uint32, offset uint32, p Peer) error {
+func (w *Worker) requestSubPiece(index uint32, offset uint32) error {
 	var (
 		remaining      = uint32(w.pieceLength) - offset
 		subPieceLength = uint32(16 * 1024)
@@ -161,5 +171,14 @@ func (w *Worker) requestSubPiece(index uint32, offset uint32, p Peer) error {
 		msg.Length = uint32(subPieceLength)
 	}
 
-	return p.Send(msg)
+	event := BroadcastRequest{
+		Message: msg,
+		Limit:   5,
+	}
+
+	go func() {
+		w.out <- event
+	}()
+
+	return nil
 }

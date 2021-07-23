@@ -314,8 +314,6 @@ func UnmarshallMessage(r io.ReadCloser) (Message, error) {
 	)
 
 	switch messageType {
-	case BitField:
-		return UnmarshallBitFieldMessage(payload)
 	case Choke:
 		return ChokeMessage{}, nil
 	case Unchoke:
@@ -326,6 +324,8 @@ func UnmarshallMessage(r io.ReadCloser) (Message, error) {
 		return NotInterestedMessage{}, nil
 	case Have:
 		return UnmarshalHaveMessage(payload)
+	case BitField:
+		return UnmarshallBitFieldMessage(payload)
 	case Request:
 		return UnmarshalRequestMessage(payload)
 	case Piece:
@@ -342,7 +342,6 @@ func UnmarshallMessage(r io.ReadCloser) (Message, error) {
 // TODO: TESTS
 func UnmarshallBitFieldMessage(data []byte) (BitFieldMessage, error) {
 	// TODO: Check BitfieldLength
-	// if error, return EOF
 	return BitFieldMessage{data}, nil
 }
 func UnmarshalHaveMessage(data []byte) (HaveMessage, error) {

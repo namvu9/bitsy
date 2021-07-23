@@ -13,12 +13,17 @@ import (
 
 func main() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	silent := flag.Bool("silent", false, "")
 	debug := flag.Bool("debug", false, "sets log level to debug")
 	flag.Parse()
 
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	if *debug {
 		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	}
+
+	if *silent {
+		zerolog.SetGlobalLevel(zerolog.Disabled)
 	}
 
 	s := bitsy.New(bitsy.Config{
@@ -40,7 +45,7 @@ func main() {
 		json, _ := json.Marshal(data)
 		rw.Header().Set("Access-Control-Allow-Origin", "*")
 		rw.Write(json)
-
 	})
+
 	http.ListenAndServe(":8080", nil)
 }
