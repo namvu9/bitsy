@@ -29,23 +29,25 @@ const renderSwarms = (torrents = [], trackers = {}) => (swarm) => {
   }, { leechers: 0, seeders: 0 })
 
 
-  //console.log("STATE", {
-    //choking: swarm.choking,
-    //blocking: swarm.blocking,
-    //interested: swarm.interested,
-    //interesting: swarm.interesting,
-    //peers: swarm.npeers,
-    //idle: swarm.idle
-  //})
-  //console.log("stats", swarm.stats)
-  
   const stats = swarm.stats
   const torrent = torrentIndex[swarm.torrent]
+
+  let unit = "B"
+  let downloadRate = stats?.downloadRate ?? 0
+  if (downloadRate > 1024)  {
+    downloadRate /= 1024
+    unit = "KiB"
+  }
+
+  if (downloadRate > 1024) {
+    downloadRate /= 1024
+    unit = "MiB"
+  }
 
   return <tr key={swarm.torrent}>
         <td>{torrent?.name ?? "LOL"}</td>
         <td>{0}</td>
-        <td>{stats?.downloadRate ?? 0}</td>
+        <td>{`${downloadRate.toFixed(2)} ${unit}/s`}</td>
         <td>{stats?.uploaded ?? 0}</td>
         <td>{swarm.npeers}</td>
         <td>{Math.floor(aggTracker.leechers / trackers[swarm.torrent].length)}</td>
