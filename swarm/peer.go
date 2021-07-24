@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"fmt"
 	"net"
 	"time"
 
@@ -74,16 +75,24 @@ func (p *Peer) Send(msg btorrent.Message) error {
 	}
 
 	if req, ok := msg.(btorrent.RequestMessage); ok {
-		if p.Blocking || !p.has(int(req.Index)) || p.isServing(req.Index, req.Offset) {
+		if p.Blocking || !p.has(int(req.Index)) {
 			return nil
 		}
 
 	}
 
-	_, err := p.Write(msg.Bytes())
-	if err != nil {
-		return err
-	}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Println("RECOVERED FROM SEND", r)
+			}
+		}()
+		_, err := p.Write(msg.Bytes())
+		if err != nil {
+			//return err
+
+		}
+	}()
 
 	switch msg.(type) {
 	case btorrent.UnchokeMessage:
@@ -96,16 +105,16 @@ func (p *Peer) Send(msg btorrent.Message) error {
 		p.Interesting = false
 	}
 
-	go p.publish(MessageSent{
-		Message: msg,
-		Peer:    p,
-	})
+	//go p.publish(MessageSent{
+		//Message: msg,
+		//Peer:    p,
+	//})
 
 	return nil
 }
 
 func (p *Peer) Idle() bool {
-	return time.Now().Sub(p.LastMessageReceived) > 2*time.Minute
+	return time.Now().Sub(p.LastMessageReceived) > 15*time.Second
 }
 
 func (p *Peer) Subscribe(out chan Event) chan Event {
@@ -129,6 +138,11 @@ func (p *Peer) Write(data []byte) (int, error) {
 }
 
 func (peer *Peer) publish(e Event) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("PUBLISH RECOVERED", r)
+		}
+	}()
 	peer.out <- e
 }
 

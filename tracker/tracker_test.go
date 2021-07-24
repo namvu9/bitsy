@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/namvu9/bitsy/pkg/bencode"
+	"github.com/namvu9/bencode"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/tracker"
 )

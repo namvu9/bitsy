@@ -29,7 +29,7 @@ func main() {
 	s := bitsy.New(bitsy.Config{
 		BaseDir:        "./testdata",
 		DownloadDir:    "./downloads",
-		MaxConnections: 30,
+		MaxConnections: 50,
 		IP:             "192.168.0.4",
 	})
 

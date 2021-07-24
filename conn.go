@@ -53,6 +53,7 @@ func (bn *BoundedNet) Dial(network string, addr string) (net.Conn, error) {
 	case <-timer.C:
 		return nil, TimeoutErr(fmt.Errorf("Dial timed out"))
 	case bn.openCh <- struct{}{}:
+		fmt.Println("DIALING", len(bn.openCh))
 		conn, err := net.DialTimeout(network, addr, timeout)
 		if err != nil {
 			return nil, err

@@ -133,11 +133,8 @@ func (s *Swarm) listen() {
 	for {
 		select {
 		case <-ticker.C:
-			s.unchokePeers() // randomly unchoke peers
+			go s.unchokePeers() // randomly unchoke peers
 			s.clearIdlePeers()
-			if len(s.peers) < 15 {
-				go s.requestPeers(15 - len(s.peers))
-			}
 		case conn := <-s.PeerCh:
 			event := JoinEvent{NewPeer(conn)}
 			go func() {
@@ -172,7 +169,7 @@ func (s *Swarm) requestPeers(n int) {
 
 func (s *Swarm) download() {
 	var (
-		maxPending = 30
+		maxPending = 50
 		pieces     = s.Pieces()
 		completeCh = make(chan DownloadCompleteEvent, maxPending)
 	)
@@ -183,6 +180,7 @@ func (s *Swarm) download() {
 		time.Sleep(time.Second)
 	}
 
+	// Request every piece?
 	// Initialize download by simply picking the first 10 that
 	// the client doesn't have
 	var missing []int
@@ -192,7 +190,7 @@ func (s *Swarm) download() {
 		}
 	}
 	for _, index := range missing {
-		if len(pending) == maxPending {
+		if len(pending) == 10 {
 			break
 		}
 		worker := s.DownloadPiece(uint32(index), completeCh, s.eventCh)
@@ -239,14 +237,16 @@ func (s *Swarm) download() {
 			// TODO: Broadcast Cancel messages for any pending requests
 
 			// Download new pieces by picking the rarest first
+			count := 0
 			for _, piece := range s.stats.PieceIdxByFreq() {
-				if len(pending) > maxPending {
+				if count == 10 {
 					break
 				}
 				if _, isPending := pending[uint32(piece.index)]; !isPending && !s.have.Get(piece.index) {
 					worker := s.DownloadPiece(uint32(piece.index), completeCh, s.eventCh)
 					go worker.Run()
 					pending[uint32(piece.index)] = worker
+					count++
 				}
 			}
 		case <-ticker.C:
@@ -256,6 +256,20 @@ func (s *Swarm) download() {
 					go worker.Restart()
 				}
 			}
+
+			count := 0
+			for _, piece := range s.stats.PieceIdxByFreq() {
+				if count == 10 {
+					break
+				}
+				if _, isPending := pending[uint32(piece.index)]; !isPending && !s.have.Get(piece.index) {
+					worker := s.DownloadPiece(uint32(piece.index), completeCh, s.eventCh)
+					go worker.Run()
+					pending[uint32(piece.index)] = worker
+					count++
+				}
+			}
+
 		}
 
 	}
@@ -306,7 +320,7 @@ func (s *Swarm) unchokePeers() {
 	if s.have.GetSum() == len(s.Pieces()) {
 		choked, _ := s.Choked()
 		for _, peer := range choked {
-			peer.Send(btorrent.UnchokeMessage{})
+			go peer.Send(btorrent.UnchokeMessage{})
 		}
 
 		return
@@ -396,6 +410,11 @@ func (s *Swarm) publish(e Event) {
 		if subscriber != nil {
 			out = append(out, subscriber)
 			go func(s chan Event) {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Println("SWARM PUBLISH RECOVERED", r)
+					}
+				}()
 				s <- e
 			}(subscriber)
 		}
