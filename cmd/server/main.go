@@ -29,7 +29,6 @@ func main() {
 	s := bitsy.New(bitsy.Config{
 		BaseDir:        "./testdata",
 		DownloadDir:    "./downloads",
-		NatPMP:         true,
 		MaxConnections: 30,
 		IP:             "192.168.0.4",
 	})
