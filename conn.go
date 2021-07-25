@@ -8,6 +8,7 @@ import (
 
 	"gitlab.com/NebulousLabs/go-upnp"
 
+	"github.com/namvu9/bencode"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/errors"
 )
@@ -53,7 +54,6 @@ func (bn *BoundedNet) Dial(network string, addr string) (net.Conn, error) {
 	case <-timer.C:
 		return nil, TimeoutErr(fmt.Errorf("Dial timed out"))
 	case bn.openCh <- struct{}{}:
-		fmt.Println("DIALING", len(bn.openCh))
 		conn, err := net.DialTimeout(network, addr, timeout)
 		if err != nil {
 			return nil, err
@@ -150,11 +150,26 @@ func Handshake(conn net.Conn, infoHash [20]byte, peerID [20]byte) error {
 		PeerID:   peerID,
 	}
 
+	// Support for the extension protocol
+	msg.Reserved[5] |= 0x10
+
 	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	_, err := conn.Write(msg.Bytes())
 	if err != nil {
 		return err
 	}
+
+	var dict bencode.Dictionary
+	var m bencode.Dictionary
+	m.SetStringKey("ut_metadata", bencode.Integer(2))
+	dict.SetStringKey("m", &m)
+
+	payload, _ := bencode.Marshal(&dict)
+
+	conn.Write(btorrent.ExtendedMessage{
+		Code:    0,
+		Payload: payload,
+	}.Bytes())
 
 	return nil
 }
