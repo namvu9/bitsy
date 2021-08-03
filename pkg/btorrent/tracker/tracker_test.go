@@ -11,7 +11,7 @@ import (
 
 	"github.com/namvu9/bencode"
 	"github.com/namvu9/bitsy/pkg/btorrent"
-	"github.com/namvu9/bitsy/tracker"
+	"github.com/namvu9/bitsy/pkg/btorrent/tracker"
 )
 
 func CreateAnnounceList(tiers ...[]string) bencode.List {

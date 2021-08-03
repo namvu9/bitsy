@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/namvu9/bencode"
-	"github.com/namvu9/bitsy/pkg/errors"
+	"github.com/namvu9/bitsy/internal/errors" // TODO: REMOVE
 )
 
 // Torrent contains metadata for one or more files and wraps
@@ -57,8 +57,6 @@ func (t *Torrent) Stat() map[string]interface{} {
 	return stats
 }
 
-// TODO: Test
-// TODO: Use this
 func (t *Torrent) Verify(pieces Pieces) bool {
 	verifiedPieces := make(map[int]bool)
 

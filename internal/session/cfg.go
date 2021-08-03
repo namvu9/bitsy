@@ -1,4 +1,4 @@
-package bitsy
+package session
 
 type Config struct {
 	BaseDir        string

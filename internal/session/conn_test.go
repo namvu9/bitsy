@@ -1,11 +1,11 @@
-package bitsy_test
+package session_test
 
 import (
 	"net"
 	"sync"
 	"testing"
 
-	"github.com/namvu9/bitsy"
+	"github.com/namvu9/bitsy/internal/session"
 )
 
 func testServer(t *testing.T, network, addr string) func() {
@@ -57,7 +57,7 @@ func TestBoundedDial(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			bn := bitsy.NewBoundedNet(5)
+			bn := session.NewBoundedNet(5)
 			defer bn.Stop()
 
 			var timeouts = make(chan struct{}, tc.calls)
@@ -69,7 +69,7 @@ func TestBoundedDial(t *testing.T) {
 				go func(i int) {
 					defer wg.Done()
 					conn, err := bn.Dial("tcp", addr)
-					if _, ok := err.(bitsy.TimeoutErr); ok {
+					if _, ok := err.(session.TimeoutErr); ok {
 						timeouts <- struct{}{}
 					}
 
@@ -118,7 +118,7 @@ func TestBoundedListener(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			addr := "localhost:8080"
-			bn := bitsy.NewBoundedNet(5)
+			bn := session.NewBoundedNet(5)
 			defer bn.Stop()
 
 			listener, err := bn.Listen("tcp", addr)
@@ -138,7 +138,7 @@ func TestBoundedListener(t *testing.T) {
 
 			for i := 0; i < tc.calls; i++ {
 				_, err := bn.Dial("tcp", addr)
-				if _, ok := err.(bitsy.TimeoutErr); ok {
+				if _, ok := err.(session.TimeoutErr); ok {
 					timeouts <- struct{}{}
 				}
 

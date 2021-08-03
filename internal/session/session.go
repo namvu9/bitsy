@@ -1,4 +1,4 @@
-package bitsy
+package session
 
 import (
 	"encoding/hex"
@@ -7,10 +7,11 @@ import (
 	"path"
 	"time"
 
+	"github.com/namvu9/bitsy/internal/errors"
 	"github.com/namvu9/bitsy/pkg/btorrent"
-	"github.com/namvu9/bitsy/pkg/errors"
-	"github.com/namvu9/bitsy/swarm"
-	"github.com/namvu9/bitsy/tracker"
+	"github.com/namvu9/bitsy/pkg/btorrent/peer"
+	"github.com/namvu9/bitsy/pkg/btorrent/swarm"
+	"github.com/namvu9/bitsy/pkg/btorrent/tracker"
 	"github.com/rs/zerolog/log"
 )
 
@@ -23,10 +24,12 @@ type TorrentID [20]byte
 type Session struct {
 	startedAt time.Time
 
+	// Clients
 	// state
 	swarms   map[TorrentID]*swarm.Swarm
 	torrents map[TorrentID]btorrent.Torrent
 	trackers map[TorrentID]*tracker.TrackerGroup
+	clients  map[TorrentID]*Client
 
 	// Config
 	peerID      [20]byte
@@ -99,14 +102,14 @@ func (s *Session) Init() (func() error, error) {
 
 		s.trackers[t.InfoHash()] = tr
 
-		swarm := swarm.New(*t, s.swarmCh, s.peerID, path.Join(s.baseDir, s.downloadDir))
-		err := swarm.Init()
-		if err != nil {
-			log.Print(err.Error())
-			delete(s.trackers, t.InfoHash())
-			// indicate torrent error
-			continue
-		}
+		swarm := swarm.New(*t, s.swarmCh)
+		swarm.Init()
+		//if err != nil {
+		//log.Print(err.Error())
+		//delete(s.trackers, t.InfoHash())
+		//// indicate torrent error
+		//continue
+		//}
 
 		s.swarms[t.InfoHash()] = &swarm
 	}
@@ -120,33 +123,33 @@ func (s *Session) Init() (func() error, error) {
 func (s *Session) announce() {
 	for {
 		go func() {
-			for hash, tr := range s.trackers {
-				var state = s.swarms[hash].Stat()
-				var (
-					torrent = s.torrents[hash]
-					swarm   = s.swarms[hash]
+			//for hash, tr := range s.trackers {
+				//var state = s.swarms[hash].Stat()
+				////var (
+					////torrent = s.torrents[hash]
+					////swarm   = s.swarms[hash]
 
-					have  = state["have"].(int)
-					stats = state["stats"].(map[string]interface{})
+					////have  = state["have"].(int)
+					////stats = state["stats"].(map[string]interface{})
 
-					downloaded = stats["downloaded"].(uint64)
-					uploaded   = stats["uploaded"].(uint64)
-					left       = uint64(len(torrent.Pieces())-have) * torrent.PieceLength()
-				)
+					////downloaded = stats["downloaded"].(uint64)
+					////uploaded   = stats["uploaded"].(uint64)
+					////left       = uint64(len(torrent.Pieces())-have) * torrent.PieceLength()
+				////)
 
-				req := tracker.Request{
-					Hash:       hash,
-					Port:       s.port,
-					PeerID:     s.peerID,
-					Left:       left,
-					Downloaded: downloaded,
-					Uploaded:   uploaded,
-					Want:       -1,
-				}
+				////req := tracker.Request{
+					////Hash:       hash,
+					////Port:       s.port,
+					////PeerID:     s.peerID,
+					////Left:       left,
+					////Downloaded: downloaded,
+					////Uploaded:   uploaded,
+					////Want:       -1,
+				////}
 
-				res := tr.Announce(req)
-				swarm.AnnounceCh <- res
-			}
+				////res := tr.Announce(req)
+				////swarm.AnnounceCh <- res
+			//}
 		}()
 
 		time.Sleep(5 * time.Second)
@@ -164,17 +167,6 @@ func (s *Session) listen() error {
 		return err
 	}
 	defer listener.Close()
-
-	// Distribute connections among the swarms
-	go func() {
-		for {
-			event := <-s.swarmCh
-			switch event.(type) {
-			case swarm.PeerRequest:
-				// Handle Peer Requests
-			}
-		}
-	}()
 
 	for {
 		conn, err := listener.Accept()
@@ -198,7 +190,7 @@ func (s *Session) listen() error {
 
 func (s *Session) InitiateHandshake(conn net.Conn, infoHash [20]byte) error {
 	var op errors.Op = "(*Messenger).Listen.GoRoutine.GoRoutine"
-	var msg btorrent.HandshakeMessage
+	var msg peer.HandshakeMessage
 
 	log.Printf("Initiating handshake: %s", conn.RemoteAddr())
 
@@ -209,7 +201,7 @@ func (s *Session) InitiateHandshake(conn net.Conn, infoHash [20]byte) error {
 		return err
 	}
 
-	err = btorrent.UnmarshalHandshake(conn, &msg)
+	err = peer.UnmarshalHandshake(conn, &msg)
 	if err != nil {
 		err = errors.Wrap(err, op)
 		log.Err(err).Strs("trace", errors.Ops(err)).Msg("Bad handshake")
@@ -229,9 +221,9 @@ func (s *Session) InitiateHandshake(conn net.Conn, infoHash [20]byte) error {
 
 func (s *Session) AcceptHandshake(conn net.Conn) error {
 	var op errors.Op = "(*Messenger).Listen.GoRoutine.GoRoutine"
-	var msg btorrent.HandshakeMessage
+	var msg peer.HandshakeMessage
 
-	err := btorrent.UnmarshalHandshake(conn, &msg)
+	err := peer.UnmarshalHandshake(conn, &msg)
 	if err != nil {
 		err = errors.Wrap(err, op)
 		log.Err(err).Strs("trace", errors.Ops(err)).Msg("Bad handshake")
@@ -252,10 +244,10 @@ func (s *Session) AcceptHandshake(conn net.Conn) error {
 
 	log.Printf("Handshake complete: %s", conn.RemoteAddr())
 
-	if s.swarms[msg.InfoHash].Done() {
-		conn.Close()
-		return nil
-	}
+	// if s.swarms[msg.InfoHash].Done() {
+	// 	conn.Close()
+	// 	return nil
+	// }
 
 	s.swarms[msg.InfoHash].PeerCh <- conn
 
@@ -273,16 +265,13 @@ func New(cfg Config) *Session {
 		maxConns:       cfg.MaxConnections,
 		peerID:         peerID,
 		preferredPorts: cfg.Port,
-		torrents:       make(map[TorrentID]btorrent.Torrent),
-		trackers:       make(map[TorrentID]*tracker.TrackerGroup),
-		swarms:         make(map[TorrentID]*swarm.Swarm),
-		swarmCh:        make(chan swarm.Event, 32),
-	}
 
-	if cfg.IP == "" {
-		c.ip = "127.0.0.1"
-	} else {
-		c.ip = cfg.IP
+		torrents: make(map[TorrentID]btorrent.Torrent),
+		trackers: make(map[TorrentID]*tracker.TrackerGroup),
+		swarms:   make(map[TorrentID]*swarm.Swarm),
+		clients:  make(map[TorrentID]*Client),
+
+		ip: cfg.IP,
 	}
 
 	return c

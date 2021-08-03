@@ -1,4 +1,4 @@
-package bitsy
+package session
 
 import (
 	"bytes"
@@ -9,8 +9,8 @@ import (
 	"gitlab.com/NebulousLabs/go-upnp"
 
 	"github.com/namvu9/bencode"
-	"github.com/namvu9/bitsy/pkg/btorrent"
-	"github.com/namvu9/bitsy/pkg/errors"
+	"github.com/namvu9/bitsy/internal/errors"
+	"github.com/namvu9/bitsy/pkg/btorrent/peer"
 )
 
 type TimeoutErr error
@@ -145,7 +145,7 @@ func forwardPorts(ports []uint16) (uint16, error) {
 // Handshake attempts to perform a handshake with the given
 // client at addr with infoHash.
 func Handshake(conn net.Conn, infoHash [20]byte, peerID [20]byte) error {
-	msg := btorrent.HandshakeMessage{
+	msg := peer.HandshakeMessage{
 		InfoHash: infoHash,
 		PeerID:   peerID,
 	}
@@ -164,17 +164,17 @@ func Handshake(conn net.Conn, infoHash [20]byte, peerID [20]byte) error {
 	m.SetStringKey("ut_metadata", bencode.Integer(2))
 	dict.SetStringKey("m", &m)
 
-	payload, _ := bencode.Marshal(&dict)
+	//payload, _ := bencode.Marshal(&dict)
 
-	conn.Write(btorrent.ExtendedMessage{
-		Code:    0,
-		Payload: payload,
-	}.Bytes())
+	//conn.Write(peer.ExtendedMessage{
+	//Code:    0,
+	//Payload: payload,
+	//}.Bytes())
 
 	return nil
 }
 
-func (s *Session) VerifyHandshake(msg btorrent.HandshakeMessage) error {
+func (s *Session) VerifyHandshake(msg peer.HandshakeMessage) error {
 	if !bytes.Equal(msg.PStr, []byte("BitTorrent protocol")) {
 		err := errors.Newf("expected pStr %s but got %s\n", "BitTorrent protocol", msg.PStr)
 		return err

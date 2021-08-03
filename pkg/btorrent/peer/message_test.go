@@ -1,52 +1,52 @@
-package btorrent_test
+package peer_test
 
 import (
 	"bytes"
 	"testing"
 
-	"github.com/namvu9/bitsy/pkg/btorrent"
+	"github.com/namvu9/bitsy/pkg/btorrent/peer"
 )
 
 func TestMessage(t *testing.T) {
 	for i, test := range []struct {
-		msg       btorrent.Message
+		msg       peer.Message
 		wantLen   int
 		wantBytes []byte
 	}{
 		{
-			msg:       btorrent.ChokeMessage{},
+			msg:       peer.ChokeMessage{},
 			wantLen:   5,
 			wantBytes: []byte{0, 0, 0, 1, 0},
 		},
 		{
-			msg:       btorrent.UnchokeMessage{},
+			msg:       peer.UnchokeMessage{},
 			wantLen:   5,
 			wantBytes: []byte{0, 0, 0, 1, 1},
 		},
 		{
-			msg:       btorrent.InterestedMessage{},
+			msg:       peer.InterestedMessage{},
 			wantLen:   5,
 			wantBytes: []byte{0, 0, 0, 1, 2},
 		},
 		{
-			msg:       btorrent.NotInterestedMessage{},
+			msg:       peer.NotInterestedMessage{},
 			wantLen:   5,
 			wantBytes: []byte{0, 0, 0, 1, 3},
 		},
 		{
-			msg:       btorrent.HaveMessage{Index: 5},
+			msg:       peer.HaveMessage{Index: 5},
 			wantLen:   9,
 			wantBytes: []byte{0, 0, 0, 5, 4, 0, 0, 0, 5},
 		},
 		{
-			msg: btorrent.BitFieldMessage{
+			msg: peer.BitFieldMessage{
 				BitField: []byte{1, 134, 155, 155, 0},
 			},
 			wantLen:   10,
 			wantBytes: []byte{0, 0, 0, 6, 5, 1, 134, 155, 155, 0},
 		},
 		{
-			msg: btorrent.RequestMessage{
+			msg: peer.RequestMessage{
 				Index:  0,
 				Offset: 1,
 				Length: 134,
@@ -55,7 +55,7 @@ func TestMessage(t *testing.T) {
 			wantBytes: []byte{0, 0, 0, 13, 6, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 134},
 		},
 		{
-			msg: btorrent.PieceMessage{
+			msg: peer.PieceMessage{
 				Index:  0,
 				Offset: 1,
 				Piece:  []byte{1, 2, 3, 4, 5},
@@ -64,7 +64,7 @@ func TestMessage(t *testing.T) {
 			wantBytes: []byte{0, 0, 0, 13, 7, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 3, 4, 5},
 		},
 		{
-			msg: btorrent.CancelMessage{
+			msg: peer.CancelMessage{
 				Index:  0,
 				Offset: 1,
 				Length: 134,

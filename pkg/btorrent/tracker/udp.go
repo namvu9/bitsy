@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/namvu9/bitsy/pkg/errors"
+	"github.com/namvu9/bitsy/internal/errors"
 )
 
 type UDPTracker struct {

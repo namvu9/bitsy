@@ -1,4 +1,4 @@
-package btorrent
+package peer
 
 import (
 	"bytes"
@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/namvu9/bitsy/pkg/errors"
+	"github.com/namvu9/bitsy/internal/errors"
 )
 
 // BitTorrent message types
@@ -68,7 +68,7 @@ func (m ChokeMessage) Bytes() []byte {
 	var buf bytes.Buffer
 
 	binary.Write(&buf, binary.BigEndian, int32(1))
-	buf.WriteByte(Choke)
+	buf.WriteByte(byte(Choke))
 
 	return buf.Bytes()
 }
