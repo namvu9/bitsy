@@ -35,7 +35,6 @@ type Worker struct {
 
 	out  chan swarm.Event
 	stop chan struct{}
-	done chan swarm.DownloadCompleteEvent
 	in   chan peer.PieceMessage
 
 	index uint32
@@ -50,10 +49,6 @@ func (w *Worker) Idle() bool {
 	return time.Now().Sub(w.LastModified) > 5*time.Second
 }
 
-func (w *Worker) Dead() bool {
-	return time.Now().Sub(w.LastModified) > time.Minute
-}
-
 func (w *Worker) Restart() {
 	w.LastModified = time.Now()
 	w.RequestPiece(uint32(w.index))
@@ -64,7 +59,7 @@ func (w *Worker) Progress() float32 {
 }
 
 func (w *Worker) Run() {
-	now := time.Now()
+	//now := time.Now()
 
 	go w.RequestPiece(w.index)
 
@@ -76,12 +71,12 @@ func (w *Worker) Run() {
 				w.subpieces[msg.Offset] = msg.Piece
 
 				if w.IsComplete() {
-					data := w.Bytes()
-					w.done <- swarm.DownloadCompleteEvent{
-						Data:     data,
-						Index:    w.index,
-						Duration: time.Now().Sub(now),
-					}
+					//data := w.Bytes()
+					//w.done <- swarm.DownloadCompleteEvent{
+						//Data:     data,
+						//Index:    w.index,
+						//Duration: time.Now().Sub(now),
+					//}
 					return
 				}
 			}
@@ -146,17 +141,38 @@ func (w *Worker) requestSubPiece(index uint32, offset uint32) error {
 		msg.Length = uint32(subPieceLength)
 	}
 
-	//event := BroadcastRequest{
-	//Message: msg,
-	//Limit:   5,
-	//}
-
-	//go func() {
-	//w.out <- event
-	//}()
-
 	return nil
 }
+
+//func (c *Worker) savePiece(index int, data []byte) error {
+	//s := c.torrent
+	//ok := s.VerifyPiece(index, data)
+	//if !ok {
+		//return fmt.Errorf("failed to save piece %d, verification failed", index)
+	//}
+
+	//// Create directory if it doesn't exist
+	//err := os.MkdirAll(c.baseDir, 0777)
+	//if err != nil {
+		//return err
+	//}
+
+	//filePath := path.Join(c.baseDir, s.HexHash(), fmt.Sprintf("%d.part", index))
+	//file, err := os.Create(filePath)
+	//if err != nil {
+		//return err
+	//}
+
+	//n, err := file.Write(data)
+	//if err != nil {
+		//return err
+	//}
+
+	//log.Printf("Wrote %d bytes to %s\n", n, filePath)
+
+	//return nil
+//}
+
 func (c *Client) download() {
 	t := c.torrent
 	var (
@@ -263,35 +279,6 @@ func (c *Client) download() {
 		}
 
 	}
-}
-
-func (c *Client) savePiece(index int, data []byte) error {
-	s := c.torrent
-	ok := s.VerifyPiece(index, data)
-	if !ok {
-		return fmt.Errorf("failed to save piece %d, verification failed", index)
-	}
-
-	// Create directory if it doesn't exist
-	err := os.MkdirAll(c.baseDir, 0777)
-	if err != nil {
-		return err
-	}
-
-	filePath := path.Join(c.baseDir, s.HexHash(), fmt.Sprintf("%d.part", index))
-	file, err := os.Create(filePath)
-	if err != nil {
-		return err
-	}
-
-	n, err := file.Write(data)
-	if err != nil {
-		return err
-	}
-
-	log.Printf("Wrote %d bytes to %s\n", n, filePath)
-
-	return nil
 }
 
 func (c *Client) verifyPieces() error {
@@ -554,91 +541,3 @@ func (c *Client) loadAndVerify(index int, piecePath string) bool {
 	//return true, nil
 //}
 
-//func (s *Swarm) AssembleTorrent(dstDir string) error {
-	//err := os.MkdirAll(dstDir, 0777)
-	//if err != nil {
-		//return err
-	//}
-
-	//files, err := s.Files()
-	//if err != nil {
-		//return err
-	//}
-
-	//offset := 0
-	//for _, file := range files {
-		//filePath := path.Join(dstDir, file.Name)
-		//outFile, err := os.Create(filePath)
-
-		//startIndex := offset / int(s.PieceLength())
-		//localOffset := offset % int(s.PieceLength())
-
-		//n, err := s.assembleFile(int(startIndex), uint64(localOffset), file.Length, outFile)
-		//if err != nil {
-			//return err
-		//}
-
-		//if n != int(file.Length) {
-			//return fmt.Errorf("expected file length to be %d but wrote %d\n", file.Length, n)
-		//}
-
-		//offset += n
-	//}
-
-	//return nil
-//}
-
-//func (s *Swarm) readPiece(index int) (*os.File, error) {
-	//path := path.Join(s.baseDir, s.HexHash(), fmt.Sprintf("%d.part", index))
-
-	//file, err := os.Open(path)
-	//if err != nil {
-		//return nil, err
-	//}
-
-	//return file, nil
-//}
-
-//func (s *Swarm) assembleFile(startIndex int, localOffset, fileSize uint64, w io.Writer) (int, error) {
-	//var totalWritten int
-
-	//index := startIndex
-	//file, err := s.readPiece(index)
-
-	//if err != nil {
-		//return 0, err
-	//}
-
-	//var buf []byte
-	//offset := localOffset
-	//for uint64(totalWritten) < fileSize {
-		//if left := fileSize - uint64(totalWritten); left < s.PieceLength() {
-			//buf = make([]byte, left)
-		//} else {
-			//buf = make([]byte, s.PieceLength())
-		//}
-
-		//n, err := file.ReadAt(buf, int64(offset))
-		//if err != nil && err != io.EOF {
-			//return totalWritten, err
-		//}
-
-		//n, err = w.Write(buf[:n])
-		//totalWritten += n
-		//if err != nil {
-			//return totalWritten, err
-		//}
-
-		//// load next piece
-		//index++
-		//if index < len(s.Pieces()) {
-			//file, err = s.readPiece(index)
-			//if err != nil {
-				//return totalWritten, err
-			//}
-			//offset = 0
-		//}
-	//}
-
-	//return totalWritten, nil
-//}

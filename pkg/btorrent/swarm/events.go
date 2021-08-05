@@ -1,8 +1,6 @@
 package swarm
 
 import (
-	"time"
-
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
 )
 
@@ -14,59 +12,6 @@ type JoinEvent struct {
 
 type LeaveEvent struct {
 	*peer.Peer
-}
-
-type InterestedEvent struct {
-	*peer.Peer
-	peer.Message
-}
-
-type InterestingEvent struct {
-	*peer.Peer
-	peer.Message
-}
-
-// BlockedEvent represents the peer choking the client
-type BlockedEvent struct {
-	By *peer.Peer
-	peer.Message
-}
-
-// ChokeEvent represents the client choking the given peer
-type ChokeEvent struct {
-	*peer.Peer
-	peer.Message
-}
-
-type UnchokeEvent struct {
-	*peer.Peer
-	peer.Message
-}
-
-type DataReceivedEvent struct {
-	peer.PieceMessage
-	Sender *peer.Peer
-}
-
-type DataSentEvent struct {
-	peer.PieceMessage
-	Receiver *peer.Peer
-}
-
-type DataRequestEvent struct {
-	peer.RequestMessage
-	Sender *peer.Peer
-}
-
-type BitFieldEvent struct {
-	peer.BitFieldMessage
-	Sender *peer.Peer
-}
-
-type DownloadCompleteEvent struct {
-	time.Duration
-	Index uint32
-	Data  []byte
 }
 
 type MulticastMessage struct {
@@ -92,13 +37,13 @@ func (s *Swarm) handleEvent(e Event) (bool, error) {
 	case LeaveEvent:
 		return s.removePeer(v.Peer)
 	case MulticastMessage:
-		return s.handleBroadcastRequest(v)
+		return s.handleMulticastMessage(v)
 	}
 
 	return true, nil
 }
 
-func (s *Swarm) handleBroadcastRequest(req MulticastMessage) (bool, error) {
+func (s *Swarm) handleMulticastMessage(req MulticastMessage) (bool, error) {
 	go func() {
 		count := 0
 		for i, peer := range s.peers {

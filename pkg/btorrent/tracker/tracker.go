@@ -3,9 +3,12 @@ package tracker
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"net/url"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/rs/zerolog/log"
@@ -23,7 +26,7 @@ type Tracker interface {
 	Announce(Request) (*Response, error)
 	ShouldAnnounce() bool
 	Err() error
-	Stat() map[string]interface{}
+	Stat() TrackerStat
 }
 
 type TrackerGroup struct {
@@ -32,65 +35,143 @@ type TrackerGroup struct {
 	outCh chan Response
 	inCh  chan map[string]interface{}
 
-	trackers [][]Tracker
+	trackers []Tracker
 	peerID   [20]byte
 
 	Port uint16
 }
 
-func (tg *TrackerGroup) Stat() []interface{} {
-	var trackers []interface{}
-	for _, tier := range tg.trackers {
-		for _, tracker := range tier {
-			trackers = append(trackers, tracker.Stat())
-		}
-	}
-
-	return trackers
+type TrackerStat struct {
+	Url          *url.URL
+	Peers        peerList
+	Seeders      int
+	Leechers     int
+	NextAnnounce time.Time
+	Err          error
 }
 
-func (tg *TrackerGroup) Announce(req Request) []PeerInfo {
-	var out []PeerInfo
+type peerList []PeerInfo
 
-	var nSuccess int
+func (pl peerList) Chunk(size int) (out [][]PeerInfo) {
+	var chunk []PeerInfo
+	for i := 0; i < len(pl); i++ {
+		if len(chunk) == size {
+			out = append(out, chunk)
+			chunk = []PeerInfo{}
+		}
+
+		chunk = append(chunk, pl[i])
+	}
+
+	if len(chunk) > 0 {
+		out = append(out, chunk)
+	}
+
+	return out
+}
+
+func (ts TrackerStat) String() string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("-----\n%s\n-----\n", ts.Url))
+	sb.WriteString(fmt.Sprintf("Seeders: %d\n", ts.Seeders))
+	sb.WriteString(fmt.Sprintf("Leechers: %d\n", ts.Leechers))
+	sb.WriteString(fmt.Sprintf("Peers: %d\n\n", len(ts.Peers)))
+
+	sb.WriteString(fmt.Sprintf("NextAnnounce: %s\n", ts.NextAnnounce.Format(time.ANSIC)))
+
+	if ts.Err != nil {
+		sb.WriteString(fmt.Sprintf("Error: %s\n", ts.Err))
+	}
+
+	return sb.String()
+}
+
+func (tg *TrackerGroup) Stat() []TrackerStat {
+	var out []TrackerStat
+	for _, tracker := range tg.trackers {
+		out = append(out, tracker.Stat())
+	}
+
+	return out
+}
+
+func (tg *TrackerGroup) Len() int {
+	return len(tg.trackers)
+}
+
+func (tg *TrackerGroup) Scrape() []TrackerStat {
+	var out []TrackerStat
+	return out
+}
+
+func (tg *TrackerGroup) AnnounceC(req Request) chan TrackerStat {
+	out := make(chan TrackerStat, 10)
+
+	go func() {
+		var wg sync.WaitGroup
+
+		for _, tracker := range tg.trackers {
+			wg.Add(1)
+			go func(tracker Tracker) {
+				defer wg.Done()
+				if !tracker.ShouldAnnounce() {
+					return
+				}
+
+				_, err := tracker.Announce(req)
+				if err != nil {
+					log.Err(err).Msg("Announce failed")
+					return
+				}
+
+				out <- tracker.Stat()
+			}(tracker)
+		}
+
+		wg.Wait()
+	}()
+
+	return out
+}
+
+func (tg *TrackerGroup) Announce(req Request) map[string]PeerInfo {
+	out := make(map[string]PeerInfo)
+
 	var wg sync.WaitGroup
 	var resCh = make(chan *Response, 30)
 
-	for _, tier := range tg.trackers {
-		for _, tracker := range tier {
-			wg.Add(1)
-			go func(tracker Tracker) {
-				if !tracker.ShouldAnnounce() {
-					wg.Done()
-					return
-				}
-
-				res, err := tracker.Announce(req)
-				if err != nil {
-					log.Err(err).Msg("Announce failed")
-					wg.Done()
-					return
-				}
-
-				select {
-				case resCh <- res:
-				default:
-				}
+	for _, tracker := range tg.trackers {
+		wg.Add(1)
+		go func(tracker Tracker) {
+			if !tracker.ShouldAnnounce() {
 				wg.Done()
-			}(tracker)
-		}
+				return
+			}
+
+			res, err := tracker.Announce(req)
+			if err != nil {
+				log.Err(err).Msg("Announce failed")
+				wg.Done()
+				return
+			}
+
+			select {
+			case resCh <- res:
+			default:
+			}
+			wg.Done()
+		}(tracker)
 	}
 
 	wg.Wait()
 	close(resCh)
-	
-	for res := range resCh {
-		out = append(out, res.Peers...)
-		nSuccess++
-	}
 
-	if nSuccess >= 5 {
-		return out
+	var count int
+	for res := range resCh {
+		for _, peer := range res.Peers {
+			count++
+			out[string(peer.IP.To16())] = peer
+		}
 	}
 
 	log.Printf("Discovered %d peers\n", len(out))
@@ -159,33 +240,19 @@ func NewRequest(hash [20]byte, port uint16, peerID [20]byte) Request {
 	}
 }
 
-func New(t btorrent.Torrent, port uint16, peerID [20]byte) *TrackerGroup {
-	var trackerTiers [][]Tracker
+func NewGroup(addrs []string) *TrackerGroup {
+	var trackers []Tracker
 
-	for _, tier := range t.AnnounceList() {
-		var trackers []Tracker
-		for _, trackerURL := range tier {
-			url, err := url.Parse(trackerURL)
-			if err != nil {
-				continue
-			}
-
-			if url.Scheme == "udp" {
-				trackers = append(trackers, &UDPTracker{
-					URL: url,
-				})
-			}
+	for _, addr := range addrs {
+		url, err := url.Parse(addr)
+		if err != nil {
+			continue
 		}
 
-		if len(trackers) > 0 {
-			trackerTiers = append(trackerTiers, trackers)
+		if url.Scheme == "udp" {
+			trackers = append(trackers, NewUDPTracker(url))
 		}
 	}
 
-	return &TrackerGroup{
-		Torrent:  t,
-		trackers: trackerTiers,
-		Port:     port,
-		peerID:   peerID,
-	}
+	return &TrackerGroup{trackers: trackers}
 }

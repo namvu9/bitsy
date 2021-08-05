@@ -74,14 +74,6 @@ func (s *Stats) Subscribe(chan Event) chan Event {
 					"downloadRate":     s.downloadRate,
 				},
 			}:
-			case event, ok := <-s.eventCh:
-				if !ok {
-					return
-				}
-				switch event.(type) {
-				case DownloadCompleteEvent:
-					//s.handleDataReceivedEvent(v)
-				}
 			}
 		}
 
@@ -89,4 +81,3 @@ func (s *Stats) Subscribe(chan Event) chan Event {
 
 	return s.eventCh
 }
-

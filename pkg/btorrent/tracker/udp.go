@@ -18,21 +18,20 @@ type UDPTracker struct {
 	interval     time.Duration
 	seeders      int
 	leechers     int
-	peers        int
+	peers        []PeerInfo
 	err          error
 	failures     int
 }
 
-func (tr *UDPTracker) Stat() map[string]interface{} {
-	stat := make(map[string]interface{})
-
-	stat["url"] = tr.URL.String()
-	stat["lastAnnounce"] = tr.lastAnnounce
-	stat["seeders"] = tr.seeders
-	stat["leechers"] = tr.leechers
-	stat["peers"] = tr.peers
-
-	return stat
+func (tr *UDPTracker) Stat() TrackerStat {
+	return TrackerStat{
+		Url:          tr.URL,
+		Seeders:      tr.seeders,
+		Leechers:     tr.leechers,
+		Peers:        tr.peers,
+		Err:          tr.err,
+		NextAnnounce: tr.lastAnnounce.Add(tr.interval),
+	}
 }
 
 func (tr *UDPTracker) Announce(req Request) (*Response, error) {
@@ -69,22 +68,25 @@ func (tr *UDPTracker) Announce(req Request) (*Response, error) {
 	}
 
 	var res Response
-	rcevbuf := make([]byte, 1024)
-	n, err := conn.Read(rcevbuf)
+	rcvBuf := make([]byte, 1024)
+	n, err := conn.Read(rcvBuf)
 
-	err = unmarshalResponse(rcevbuf[:n], &res)
+	err = unmarshalResponse(rcvBuf[:n], &res)
 	if err != nil {
 		tr.scheduleRetry(err)
 		return nil, err
 	}
 
 	tr.lastAnnounce = time.Now()
-	tr.interval = time.Duration(res.Interval * uint32(time.Second))
+	tr.interval = time.Second * time.Duration(res.Interval)
 	tr.leechers = int(res.NLeechers)
 	tr.seeders = int(res.NSeeders)
-	tr.peers = len(res.Peers)
 	tr.err = nil
 	tr.failures = 0
+
+	for _, peer := range res.Peers {
+		tr.peers = append(tr.peers, peer)
+	}
 
 	return &res, nil
 }
@@ -108,9 +110,8 @@ func (tr *UDPTracker) Connect() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	
 
-	conn.SetDeadline(time.Now().Add(5*time.Second))
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	if err != nil {
 		tr.scheduleRetry(err)
@@ -198,12 +199,13 @@ func unmarshalResponse(data []byte, v *Response) error {
 		return fmt.Errorf("Invalid tracker response %d", len(data))
 	}
 	v.Action = binary.BigEndian.Uint32(data[:4])
-	if v.Action != ANNOUNCE {
-		return fmt.Errorf("Expected action %d but got %d", ANNOUNCE, v.Action)
-	}
 
 	if v.Action == ERROR {
 		return errors.New(string(data[4:]))
+	}
+
+	if v.Action != ANNOUNCE {
+		return fmt.Errorf("Expected action %d but got %d", ANNOUNCE, v.Action)
 	}
 
 	v.TxID = binary.BigEndian.Uint32(data[4:8])
@@ -222,4 +224,11 @@ func unmarshalResponse(data []byte, v *Response) error {
 	}
 
 	return nil
+}
+
+func NewUDPTracker(url *url.URL) *UDPTracker {
+	return &UDPTracker{
+		URL:          url,
+		lastAnnounce: time.Now(),
+	}
 }

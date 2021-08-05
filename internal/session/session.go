@@ -44,35 +44,6 @@ type Session struct {
 	swarmCh chan swarm.Event
 }
 
-func (s *Session) Stat() map[string]interface{} {
-	stats := make(map[string]interface{})
-
-	stats["name"] = "session"
-	stats["sessionLength"] = time.Now().Sub(s.startedAt)
-
-	var torrents = []map[string]interface{}{}
-	for _, torrent := range s.torrents {
-		torrents = append(torrents, torrent.Stat())
-	}
-
-	stats["torrents"] = torrents
-
-	var trackers = map[string]interface{}{}
-	for hash, tracker := range s.trackers {
-		hex := hex.EncodeToString(hash[:])
-		trackers[hex] = tracker.Stat()
-	}
-	stats["trackers"] = trackers
-
-	var swarms []map[string]interface{}
-	for _, swarm := range s.swarms {
-		swarms = append(swarms, swarm.Stat())
-	}
-	stats["swarms"] = swarms
-
-	return stats
-}
-
 func (s *Session) Init() (func() error, error) {
 	var op errors.Op = "(*Client).Init"
 
@@ -82,7 +53,7 @@ func (s *Session) Init() (func() error, error) {
 
 	s.startedAt = time.Now()
 
-	port, err := forwardPorts(append(s.preferredPorts, DEFAULTPORTS...))
+	port, err := ForwardPorts(append(s.preferredPorts, DEFAULTPORTS...))
 	if err != nil {
 		return nil, errors.Wrap(err, op)
 	}
@@ -98,7 +69,7 @@ func (s *Session) Init() (func() error, error) {
 	log.Printf("Loaded %d torrents from %s\n", len(torrents), dir)
 	for _, t := range torrents {
 		s.torrents[t.InfoHash()] = *t
-		tr := tracker.New(*t, s.port, s.peerID)
+		tr := tracker.NewGroup(t.AnnounceList()[0])
 
 		s.trackers[t.InfoHash()] = tr
 
@@ -151,8 +122,6 @@ func (s *Session) announce() {
 				////swarm.AnnounceCh <- res
 			//}
 		}()
-
-		time.Sleep(5 * time.Second)
 	}
 }
 
@@ -178,7 +147,7 @@ func (s *Session) listen() error {
 		}
 
 		go func() {
-			err := s.AcceptHandshake(conn)
+			err := s.acceptHandshake(conn)
 			if err != nil {
 				log.Err(err).Msgf("Handshake failed: %s", conn.RemoteAddr())
 				conn.Close()
@@ -188,9 +157,8 @@ func (s *Session) listen() error {
 	}
 }
 
-func (s *Session) InitiateHandshake(conn net.Conn, infoHash [20]byte) error {
+func (s *Session) initiateHandshake(conn net.Conn, infoHash [20]byte) error {
 	var op errors.Op = "(*Messenger).Listen.GoRoutine.GoRoutine"
-	var msg peer.HandshakeMessage
 
 	log.Printf("Initiating handshake: %s", conn.RemoteAddr())
 
@@ -201,6 +169,7 @@ func (s *Session) InitiateHandshake(conn net.Conn, infoHash [20]byte) error {
 		return err
 	}
 
+	var msg peer.HandshakeMessage
 	err = peer.UnmarshalHandshake(conn, &msg)
 	if err != nil {
 		err = errors.Wrap(err, op)
@@ -219,9 +188,12 @@ func (s *Session) InitiateHandshake(conn net.Conn, infoHash [20]byte) error {
 	return nil
 }
 
-func (s *Session) AcceptHandshake(conn net.Conn) error {
+func (s *Session) acceptHandshake(conn net.Conn) error {
 	var op errors.Op = "(*Messenger).Listen.GoRoutine.GoRoutine"
 	var msg peer.HandshakeMessage
+	
+	// p := peer.New(conn)
+	//handshake := <- p.Msg
 
 	err := peer.UnmarshalHandshake(conn, &msg)
 	if err != nil {
@@ -276,3 +248,33 @@ func New(cfg Config) *Session {
 
 	return c
 }
+
+func (s *Session) Stat() map[string]interface{} {
+	stats := make(map[string]interface{})
+
+	stats["name"] = "session"
+	stats["sessionLength"] = time.Now().Sub(s.startedAt)
+
+	var torrents = []map[string]interface{}{}
+	for _, torrent := range s.torrents {
+		torrents = append(torrents, torrent.Stat())
+	}
+
+	stats["torrents"] = torrents
+
+	var trackers = map[string]interface{}{}
+	for hash, tracker := range s.trackers {
+		hex := hex.EncodeToString(hash[:])
+		trackers[hex] = tracker.Stat()
+	}
+	stats["trackers"] = trackers
+
+	var swarms []map[string]interface{}
+	for _, swarm := range s.swarms {
+		swarms = append(swarms, swarm.Stat())
+	}
+	stats["swarms"] = swarms
+
+	return stats
+}
+

@@ -11,8 +11,10 @@ type Extensions struct {
 }
 
 const (
+	// LTEP Extension Protocol
 	EXT_PROT = 44 // ?? 20th bit from the right
 	EXT_FAST = 61
+	EXT_DHT  = 63
 )
 
 func (ext *Extensions) Enable(bitIdx int) error {
@@ -23,8 +25,19 @@ func (ext *Extensions) IsEnabled(bitIdx int) bool {
 	return ext.bits.Get(bitIdx)
 }
 
-func newExtensionsField() *Extensions {
+func (ext *Extensions) Get() []int {
+	var out []int
+	for i := 0; i < 64; i++ {
+		if ext.IsEnabled(i) {
+			out = append(out, i)
+		}
+	}
+
+	return out
+}
+
+func NewExtensionsField(bits [8]byte) *Extensions {
 	return &Extensions{
-		bits: make(bits.BitField, 64),
+		bits: bits[:],
 	}
 }

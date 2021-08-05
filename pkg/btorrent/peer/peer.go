@@ -2,6 +2,7 @@ package peer
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 // Peer represents a connection to another peer in the
 // swarm
 type Peer struct {
+	ID []byte
 	net.Conn
 	closed bool
 
@@ -45,15 +47,27 @@ type Peer struct {
 
 	// A bitfield specifying the indexes of the pieces that
 	// the peer has
-	Pieces     bits.BitField
+	Pieces bits.BitField
 
 	// Extensions enabled by the peer's client
-	Extensions btorrent.Extensions
+	Extensions *btorrent.Extensions
 
 	LastMessageReceived time.Time
 	LastMessageSent     time.Time
 
 	requests []RequestMessage
+}
+
+func (p *Peer) Client() string {
+	return peerIDStr(p.ID)
+}
+
+func (p *Peer) ClientTag() string {
+	return string(p.ID[:8])
+}
+
+func (p *Peer) IDStr() string {
+	return fmt.Sprintf("%x", p.ID[8:])
 }
 
 func (p *Peer) Close() error {
@@ -111,10 +125,6 @@ func (p *Peer) write(data []byte) (int, error) {
 	return n, nil
 }
 
-//func (peer *Peer) publish(e Event) {
-	//peer.Out <- e
-//}
-
 func (peer *Peer) HasPiece(index int) bool {
 	return peer.Pieces.Get(index)
 }
@@ -127,7 +137,6 @@ func (p *Peer) Listen(ctx context.Context) {
 
 		if err != nil && errors.IsEOF(err) {
 			p.Close()
-			//peer.publish(LeaveEvent{peer})
 			return
 		}
 
@@ -162,6 +171,7 @@ func New(c net.Conn) *Peer {
 		Choked:              true,
 		LastMessageReceived: time.Now(),
 		LastMessageSent:     time.Now(),
+		Msg:                 make(chan Message),
 	}
 	return peer
 }

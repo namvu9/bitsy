@@ -119,7 +119,7 @@ type upnpRes struct {
 	port       int
 }
 
-func forwardPorts(ports []uint16) (uint16, error) {
+func ForwardPorts(ports []uint16) (uint16, error) {
 	var op errors.Op = "client.forwardPorts"
 
 	// Discover UPnP-supporting routers
@@ -164,12 +164,12 @@ func Handshake(conn net.Conn, infoHash [20]byte, peerID [20]byte) error {
 	m.SetStringKey("ut_metadata", bencode.Integer(2))
 	dict.SetStringKey("m", &m)
 
-	//payload, _ := bencode.Marshal(&dict)
+	payload, _ := bencode.Marshal(&dict)
 
-	//conn.Write(peer.ExtendedMessage{
-	//Code:    0,
-	//Payload: payload,
-	//}.Bytes())
+	conn.Write(peer.ExtendedMessage{
+		Code:    0,
+		Payload: payload,
+	}.Bytes())
 
 	return nil
 }

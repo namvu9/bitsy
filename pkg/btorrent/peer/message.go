@@ -239,7 +239,10 @@ func (m CancelMessage) Bytes() []byte {
 
 // ExtendedMessage ...
 // TODO:
-type ExtendedMessage struct{}
+type ExtendedMessage struct {
+	Code    uint32
+	Payload []byte
+}
 
 // TODO: Implement
 func (m ExtendedMessage) Bytes() []byte {
