@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -50,25 +51,7 @@ type TrackerStat struct {
 	Err          error
 }
 
-type peerList []PeerInfo
-
-func (pl peerList) Chunk(size int) (out [][]PeerInfo) {
-	var chunk []PeerInfo
-	for i := 0; i < len(pl); i++ {
-		if len(chunk) == size {
-			out = append(out, chunk)
-			chunk = []PeerInfo{}
-		}
-
-		chunk = append(chunk, pl[i])
-	}
-
-	if len(chunk) > 0 {
-		out = append(out, chunk)
-	}
-
-	return out
-}
+type peerList []net.Addr
 
 func (ts TrackerStat) String() string {
 	var sb strings.Builder
@@ -104,31 +87,38 @@ func (tg *TrackerGroup) Scrape() []TrackerStat {
 	return out
 }
 
-func (tg *TrackerGroup) AnnounceC(req Request) chan TrackerStat {
-	out := make(chan TrackerStat, 10)
+func AnnounceS(ctx context.Context, urls []string, req Request) chan TrackerStat {
+	return NewGroup(urls).AnnounceS(ctx, req)
+}
+
+// AnnounceS is like Announce, but returns a stream instead
+// of a slice
+func (tg *TrackerGroup) AnnounceS(ctx context.Context, req Request) chan TrackerStat {
+	out := make(chan TrackerStat, len(tg.trackers))
 
 	go func() {
 		var wg sync.WaitGroup
 
 		for _, tracker := range tg.trackers {
 			wg.Add(1)
-			go func(tracker Tracker) {
+			go func(tracker Tracker, wg *sync.WaitGroup) {
 				defer wg.Done()
+
 				if !tracker.ShouldAnnounce() {
 					return
 				}
 
 				_, err := tracker.Announce(req)
 				if err != nil {
-					log.Err(err).Msg("Announce failed")
 					return
 				}
 
 				out <- tracker.Stat()
-			}(tracker)
+			}(tracker, &wg)
 		}
 
 		wg.Wait()
+		close(out)
 	}()
 
 	return out

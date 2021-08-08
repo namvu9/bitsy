@@ -21,7 +21,7 @@ func peerIDStr(id []byte) string {
 		return idFunc(id)
 	}
 
-	return "Unknown"
+	return string(id)
 }
 
 func qBittorrentClient(id []byte) string {

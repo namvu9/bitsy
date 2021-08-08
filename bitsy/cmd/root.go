@@ -83,7 +83,7 @@ func initConfig() {
 
 		// Search config in home directory with name ".bitsy" (without extension).
 		viper.AddConfigPath(home)
-		viper.SetConfigType("yaml")
+		viper.SetConfigType("json")
 		viper.SetConfigName(".bitsy")
 	}
 

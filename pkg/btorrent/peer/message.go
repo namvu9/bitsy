@@ -30,7 +30,7 @@ type Message interface {
 
 type HandshakeMessage struct {
 	PStrLen  byte
-	PStr     []byte // Protocol string
+	PStr     string // Protocol string
 	Reserved [8]byte
 	InfoHash [20]byte
 	PeerID   [20]byte
@@ -39,12 +39,10 @@ type HandshakeMessage struct {
 func (m HandshakeMessage) Bytes() []byte {
 	var buf bytes.Buffer
 
-	buf.WriteByte(19)
-	buf.WriteString("BitTorrent protocol")
+	buf.WriteByte(m.PStrLen)
+	buf.WriteString(m.PStr)
 
-	reserved := make([]byte, 8)
-
-	buf.Write(reserved)
+	buf.Write(m.Reserved[:])
 
 	// infohash
 	buf.Write(m.InfoHash[:])
@@ -237,23 +235,6 @@ func (m CancelMessage) Bytes() []byte {
 	return buf.Bytes()
 }
 
-// ExtendedMessage ...
-// TODO:
-type ExtendedMessage struct {
-	Code    uint32
-	Payload []byte
-}
-
-// TODO: Implement
-func (m ExtendedMessage) Bytes() []byte {
-	var buf bytes.Buffer
-
-	binary.Write(&buf, binary.BigEndian, int32(0))
-	buf.WriteByte(Extended)
-
-	return buf.Bytes()
-}
-
 func UnmarshalHandshake(r io.Reader, msg *HandshakeMessage) error {
 	var buf bytes.Buffer
 
@@ -269,7 +250,7 @@ func UnmarshalHandshake(r io.Reader, msg *HandshakeMessage) error {
 	data := buf.Bytes()
 
 	msg.PStrLen = data[0]
-	msg.PStr = data[1:20]
+	msg.PStr = string(data[1:20])
 
 	copy(msg.Reserved[:], data[20:28])
 	copy(msg.Reserved[:], data[20:28])
@@ -336,7 +317,7 @@ func UnmarshallMessage(r io.ReadCloser) (Message, error) {
 	case Cancel:
 		return UnmarshalCancelMessage(payload)
 	case Extended:
-		return UnmarshalExtendedMessage(payload)
+		return UnmarshalMsg(payload)
 	default:
 		return KeepAliveMessage{}, nil
 	}
@@ -393,9 +374,5 @@ func UnmarshalCancelMessage(data []byte) (CancelMessage, error) {
 	msg.Offset = binary.BigEndian.Uint32(data[4:8])
 	msg.Length = binary.BigEndian.Uint32(data[8:12])
 
-	return msg, nil
-}
-func UnmarshalExtendedMessage(data []byte) (ExtendedMessage, error) {
-	var msg ExtendedMessage
 	return msg, nil
 }

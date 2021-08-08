@@ -18,7 +18,7 @@ type UDPTracker struct {
 	interval     time.Duration
 	seeders      int
 	leechers     int
-	peers        []PeerInfo
+	peers        []net.Addr
 	err          error
 	failures     int
 }
@@ -51,13 +51,13 @@ func (tr *UDPTracker) Announce(req Request) (*Response, error) {
 		Request: req,
 	}
 
-	conn, err := net.Dial("udp", tr.URL.Host)
+	conn, err := net.DialTimeout("udp", tr.URL.Host, 500*time.Millisecond)
 	if err != nil {
 		tr.scheduleRetry(err)
 		return nil, errors.Wrap(err, op, errors.Network)
 	}
-	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	conn.SetWriteDeadline(time.Now().Add(500*time.Millisecond))
+	conn.SetReadDeadline(time.Now().Add(500*time.Millisecond))
 
 	defer conn.Close()
 
@@ -85,7 +85,7 @@ func (tr *UDPTracker) Announce(req Request) (*Response, error) {
 	tr.failures = 0
 
 	for _, peer := range res.Peers {
-		tr.peers = append(tr.peers, peer)
+		tr.peers = append(tr.peers, &net.TCPAddr{IP: peer.IP, Port: int(peer.Port)})
 	}
 
 	return &res, nil
@@ -106,7 +106,7 @@ func (tr *UDPTracker) ShouldAnnounce() bool {
 
 func (tr *UDPTracker) Connect() (uint64, error) {
 	var op errors.Op = "tracker.UDPConnect"
-	conn, err := net.Dial("udp", tr.URL.Host)
+	conn, err := net.DialTimeout("udp", tr.URL.Host, 500*time.Millisecond)
 	if err != nil {
 		return 0, err
 	}

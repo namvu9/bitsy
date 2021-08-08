@@ -1,6 +1,9 @@
 package swarm
 
 import (
+	"fmt"
+	"math/rand"
+
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
 )
 
@@ -33,8 +36,13 @@ type MulticastMessage struct {
 func (s *Swarm) handleEvent(e Event) (bool, error) {
 	switch v := e.(type) {
 	case JoinEvent:
+		fmt.Println("PEERS", len(s.peers)+1)
+		v.Peer.OnClose(func(p *peer.Peer) {
+			s.EventCh <- LeaveEvent{Peer:p}
+		 })
 		return s.addPeer(v.Peer)
 	case LeaveEvent:
+		fmt.Println("PEER LEFT", len(s.peers)-1)
 		return s.removePeer(v.Peer)
 	case MulticastMessage:
 		return s.handleMulticastMessage(v)
@@ -45,19 +53,26 @@ func (s *Swarm) handleEvent(e Event) (bool, error) {
 
 func (s *Swarm) handleMulticastMessage(req MulticastMessage) (bool, error) {
 	go func() {
+		var res []*peer.Peer
 		count := 0
-		for i, peer := range s.peers {
-			if req.Limit > 0 && i == req.Limit {
+		for _, peer := range s.peers {
+			n := rand.Int31n(100)
+			if n < 50 {
+				continue
+			}
+			if req.Limit > 0 && count == req.Limit {
 				break
 			}
 
 			if req.Filter != nil && !req.Filter(peer) {
-				break
+				continue
 			}
 
+			res = append(res, peer)
 			count++
-			//go peer.Send(req.Message)
 		}
+
+		req.Handler(res)
 	}()
 
 	return false, nil

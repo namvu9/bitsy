@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"fmt"
 	"net"
 	"time"
 
@@ -8,7 +9,6 @@ import (
 
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
-	"github.com/namvu9/bitsy/pkg/btorrent/tracker"
 )
 
 // A Swarm represents a group of peers (including the
@@ -16,10 +16,9 @@ import (
 type Swarm struct {
 	btorrent.Torrent
 
-	eventCh    chan Event
-	outCh      chan Event
-	AnnounceCh chan []tracker.PeerInfo
-	PeerCh     chan net.Conn
+	EventCh    chan Event
+	OutCh      chan Event
+	PeerCh     chan *peer.Peer
 
 	peers []*peer.Peer
 	stats *Stats
@@ -30,10 +29,9 @@ type Swarm struct {
 func New(t btorrent.Torrent, out chan Event) Swarm {
 	swarm := Swarm{
 		Torrent:    t,
-		PeerCh:     make(chan net.Conn, 32),
-		eventCh:    make(chan Event, 32),
-		AnnounceCh: make(chan []tracker.PeerInfo, 32),
-		outCh:      out,
+		PeerCh:     make(chan *peer.Peer, 32),
+		EventCh:    make(chan Event, 32),
+		OutCh:      out,
 	}
 
 	return swarm
@@ -93,13 +91,12 @@ func (s *Swarm) Stat() map[string]interface{} {
 func (s *Swarm) Init() {
 	for {
 		select {
-		case conn := <-s.PeerCh:
-			event := JoinEvent{peer.New(conn)}
+		case p := <-s.PeerCh:
+			event := JoinEvent{p}
 			go func() {
-				s.eventCh <- event
-				s.publish(event)
+				s.EventCh <- event
 			}()
-		case event := <-s.eventCh:
+		case event := <-s.EventCh:
 			propagate, err := s.handleEvent(event)
 			if err != nil {
 				log.Err(err).Str("swarm", s.HexHash()).Msg("Handle event failed")
@@ -107,13 +104,11 @@ func (s *Swarm) Init() {
 			}
 
 			if propagate {
-				s.publish(event)
+				go s.publish(event)
 			}
 		}
 	}
 }
-
-func (s *Swarm) listen() {}
 
 func (s *Swarm) choked() (choked []*peer.Peer, unchoked []*peer.Peer) {
 	for _, peer := range s.peers {
@@ -127,7 +122,9 @@ func (s *Swarm) choked() (choked []*peer.Peer, unchoked []*peer.Peer) {
 	return
 }
 
-func (s *Swarm) publish(e Event) {}
+func (s *Swarm) publish(e Event) {
+	s.OutCh <- e
+}
 
 func (s *Swarm) addPeer(peer *peer.Peer) (bool, error) {
 	s.peers = append(s.peers, peer)
@@ -140,10 +137,11 @@ func (s *Swarm) removePeer(peer *peer.Peer) (bool, error) {
 		if p == peer {
 			s.peers[i] = s.peers[len(s.peers)-1]
 			s.peers = s.peers[:len(s.peers)-1]
+			return true, nil
 		}
 	}
 
-	return true, nil
+	return false, fmt.Errorf("peer %p not found", peer)
 }
 
 func (s *Swarm) getPeer(addr net.Addr) (*peer.Peer, bool) {

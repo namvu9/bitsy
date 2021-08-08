@@ -6,9 +6,9 @@ import (
 	"net"
 	"time"
 
+	"github.com/namvu9/bencode"
 	"github.com/namvu9/bitsy/internal/errors"
 	"github.com/namvu9/bitsy/pkg/bits"
-	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/rs/zerolog/log"
 )
 
@@ -17,7 +17,8 @@ import (
 type Peer struct {
 	ID []byte
 	net.Conn
-	closed bool
+	closed   bool
+	InfoHash [20]byte
 
 	Msg chan Message
 	//Out chan Event
@@ -50,12 +51,14 @@ type Peer struct {
 	Pieces bits.BitField
 
 	// Extensions enabled by the peer's client
-	Extensions *btorrent.Extensions
+	Extensions *Extensions
 
 	LastMessageReceived time.Time
 	LastMessageSent     time.Time
 
 	requests []RequestMessage
+
+	onClose []func(*Peer)
 }
 
 func (p *Peer) Client() string {
@@ -71,10 +74,17 @@ func (p *Peer) IDStr() string {
 }
 
 func (p *Peer) Close() error {
+	for _, fn := range p.onClose {
+		go fn(p)
+	}
 	return p.Conn.Close()
 }
 
-func (p *Peer) isServing(index uint32, offset uint32) bool {
+func (p *Peer) OnClose(fn func(*Peer)) {
+	p.onClose = append(p.onClose, fn)
+}
+
+func (p *Peer) IsServing(index uint32, offset uint32) bool {
 	for _, req := range p.requests {
 		if req.Index == index && req.Offset == offset {
 			return true
@@ -85,16 +95,6 @@ func (p *Peer) isServing(index uint32, offset uint32) bool {
 }
 
 func (p *Peer) Send(msg Message) error {
-	if p.closed {
-		return nil
-	}
-
-	go func() {
-		_, err := p.write(msg.Bytes())
-		if err != nil {
-		}
-	}()
-
 	switch msg.(type) {
 	case UnchokeMessage:
 		p.Choked = false
@@ -104,6 +104,12 @@ func (p *Peer) Send(msg Message) error {
 		p.Interesting = true
 	case NotInterestedMessage:
 		p.Interesting = false
+	}
+
+	_, err := p.write(msg.Bytes())
+	if err != nil {
+		p.Close()
+		return err
 	}
 
 	return nil
@@ -131,6 +137,16 @@ func (peer *Peer) HasPiece(index int) bool {
 
 // Listen for incoming messages
 func (p *Peer) Listen(ctx context.Context) {
+	go func() {
+		for {
+			if p.Idle() {
+				p.Close()
+				return
+			}
+			time.Sleep(5 * time.Second)
+		}
+	}()
+
 	for {
 		msg, err := UnmarshallMessage(p.Conn)
 		p.LastMessageReceived = time.Now()
@@ -155,13 +171,62 @@ func (p *Peer) Listen(ctx context.Context) {
 		case UnchokeMessage:
 			p.Blocking = false
 		case InterestedMessage:
+			fmt.Printf("%s is interested", p.ID)
 			p.Interested = true
 		case NotInterestedMessage:
 			p.Interested = false
 		case BitFieldMessage:
 			p.Pieces = v.BitField
+		case *ExtHandshakeMsg:
+			err := p.handleExtHandshakeMsg(v)
+			if err != nil {
+				fmt.Println("Listen.*ExtHandshakeMessage", err)
+			}
+		}
+
+		go func() {
+			p.Msg <- msg
+		}()
+	}
+}
+
+func (p *Peer) handleExtHandshakeMsg(msg *ExtHandshakeMsg) error {
+	for key, value := range msg.M().Entries() {
+		if v, ok := value.(bencode.Value); ok {
+			p.Extensions.M().SetStringKey(key, v)
 		}
 	}
+
+	for key, value := range msg.D().Entries() {
+		if key == "m" {
+			continue
+		}
+
+		if v, ok := value.(bencode.Value); ok {
+			p.Extensions.D().SetStringKey(key, v)
+		}
+	}
+
+	return nil
+}
+
+func (p *Peer) Init() error {
+	var msg HandshakeMessage
+	err := UnmarshalHandshake(p, &msg)
+	if err != nil {
+		return err
+	}
+
+	if msg.PStr != "BitTorrent protocol" {
+		return fmt.Errorf("got %s want %s", msg.PStr, "BitTorrent protocol")
+	}
+	p.Extensions = NewExtensionsField(msg.Reserved)
+	p.ID = msg.PeerID[:]
+	p.InfoHash = msg.InfoHash
+
+	go p.Listen(context.Background())
+
+	return nil
 }
 
 func New(c net.Conn) *Peer {
@@ -171,7 +236,7 @@ func New(c net.Conn) *Peer {
 		Choked:              true,
 		LastMessageReceived: time.Now(),
 		LastMessageSent:     time.Now(),
-		Msg:                 make(chan Message),
+		Msg:                 make(chan Message, 32),
 	}
 	return peer
 }

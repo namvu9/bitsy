@@ -17,13 +17,14 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"math/rand"
 	"net"
 	"os"
 	"sync"
 	"time"
 
+	"github.com/namvu9/bencode"
 	"github.com/namvu9/bitsy/internal/session"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
@@ -31,41 +32,154 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func connect(ctx context.Context, peers []tracker.PeerInfo, infoHash, peerID [20]byte) chan *peer.Peer {
-	out := make(chan *peer.Peer, len(peers))
+func withTimeout(ctx context.Context, timeout time.Duration) (context.Context, func()) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+
+	go func() {
+		<-ctx.Done()
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			os.Stderr.WriteString(fmt.Sprintf("%s\n", ctx.Err()))
+			os.Exit(1)
+		}
+	}()
+
+	return ctx, cancel
+}
+
+// getTorrentCmd represents the getTorrent command
+var getTorrentCmd = &cobra.Command{
+	Use:   "getTorrent <magnet url>",
+	Short: "Convert a magnet url to a torrent file",
+	Long:  ``,
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		ctx, cancel := withTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		t, err := btorrent.Load(args[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Could not load torrent: %s\n", err)
+			os.Exit(1)
+		}
+
+		if _, ok := t.Info(); ok {
+			os.Stdout.Write(t.Bytes())
+			return
+		}
+
+		log("Fetching metadata... ")
+		var (
+			start = time.Now()
+		)
+
+		t, err = getMeta(ctx, t, 6881)
+		out := cmd.Flag("out")
+		if out != nil && out.Value.String() != "" {
+			if err := os.WriteFile(out.Value.String(), t.Bytes(), 0664); err != nil {
+				log("%s\n", err)
+				return
+			}
+		} else if _, err := os.Stdout.Write(t.Bytes()); err != nil {
+			log("%s\n", err)
+			return
+		}
+		log("Done (took %.2fs)\n", time.Since(start).Seconds())
+	},
+}
+
+func foo(ctx context.Context, t btorrent.Torrent, peers []net.Addr) (*btorrent.Torrent, error) {
+	info, err := requestMeta(ctx, peers, &t)
+	if err != nil {
+		log(err.Error())
+		return nil, err
+	}
+
+	t.Dict().SetStringKey("info", info)
+	if !t.VerifyInfoDict() {
+		return nil, fmt.Errorf("ASDF")
+	}
+
+	return &t, nil
+}
+
+func getMeta(ctx context.Context, t *btorrent.Torrent, port uint16) (*btorrent.Torrent, error) {
+	res := make(chan btorrent.Torrent)
+	go func() {
+		for stat := range announce(ctx, t, port) {
+			if len(stat.Peers) == 0 {
+				continue
+			}
+
+			go func(peers []net.Addr) {
+				for {
+					ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+					defer cancel()
+					t, err := foo(ctx, *t, peers)
+					if err == nil {
+						res <- *t
+						return 
+					}
+				}
+
+			}(stat.Peers)
+		}
+	}()
+
+	select {
+	case t := <-res:
+		return &t, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func requestMeta(ctx context.Context, peers []net.Addr, t *btorrent.Torrent) (*bencode.Dictionary, error) {
+	var (
+		dialCfg = peer.DialConfig{
+			InfoHash:   t.InfoHash(),
+			Timeout:    500 * time.Millisecond,
+			PeerID:     session.PeerID,
+			Extensions: session.Reserved,
+			PStr:       session.PStr,
+		}
+	)
+
+	info, err := peer.GetInfoDict(ctx, peers, dialCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return info, nil
+}
+
+func log(fmtString string, args ...interface{}) {
+	os.Stderr.WriteString(fmt.Sprintf(fmtString, args...))
+}
+
+func announce(ctx context.Context, t *btorrent.Torrent, port uint16) chan tracker.TrackerStat {
+	var (
+		tiers = t.AnnounceList()
+		out   = make(chan tracker.TrackerStat, 10)
+		req   = tracker.NewRequest(t.InfoHash(), port, session.PeerID)
+	)
 
 	go func() {
 		var wg sync.WaitGroup
-		for _, p := range peers {
+		for _, urls := range tiers {
 			wg.Add(1)
-			go func(p tracker.PeerInfo) {
-				defer func() {
-					wg.Done()
-				}()
-				addr := fmt.Sprintf("%s:%d", p.IP, p.Port)
-				conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
-				if err != nil {
-					return
-				}
+			go func(urls []string, wg *sync.WaitGroup) {
+				defer wg.Done()
 
-				conn.SetDeadline(time.Now().Add(time.Second))
-				err = session.Handshake(conn, infoHash, peerID)
-				if err != nil {
-					conn.Close()
+				select {
+				case <-ctx.Done():
 					return
+				default:
+					res := tracker.AnnounceS(ctx, urls, req)
+					for stat := range res {
+						out <- stat
+					}
 				}
-
-				pPeer := peer.New(conn)
-				var msg peer.HandshakeMessage
-				err = peer.UnmarshalHandshake(conn, &msg)
-				if err != nil {
-					return
-				}
-				pPeer.Extensions = btorrent.NewExtensionsField(msg.Reserved)
-				pPeer.ID = msg.PeerID[:]
-
-				out <- pPeer
-			}(p)
+			}(urls, &wg)
 		}
 		wg.Wait()
 		close(out)
@@ -74,56 +188,7 @@ func connect(ctx context.Context, peers []tracker.PeerInfo, infoHash, peerID [20
 	return out
 }
 
-var peerID = [20]byte{'-', 'B', 'T', '0', '0', '0', '0', '-'}
-
-// getTorrentCmd represents the getTorrent command
-var getTorrentCmd = &cobra.Command{
-	Use:   "getTorrent <magnet url>",
-	Short: "Convert a magnet url to a torrent file",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
-
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
-	Args: cobra.ExactArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		rand.Read(peerID[8:])
-		t, err := btorrent.Load(args[0])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Could not load torrent: %s\n", err)
-		}
-
-		var peerID [20]byte
-
-		tg := tracker.NewGroup(t.AnnounceList()[0])
-		tc := tg.AnnounceC(tracker.NewRequest(t.InfoHash(), 1337, peerID))
-
-		var out []*peer.Peer
-		for stat := range tc {
-			for _, chunk := range stat.Peers.Chunk(30) {
-				for p := range connect(context.Background(), chunk, t.InfoHash(), peerID) {
-					out = append(out, p)
-					if len(out) >= 10 {
-						//fmt.Printf("Took %s to find %d peers\n", time.Since(start), len(out))
-						return
-					}
-				}
-			}
-		}
-	},
-}
-
 func init() {
+	getTorrentCmd.Flags().StringP("out", "o", "", "file to write torrent file to")
 	rootCmd.AddCommand(getTorrentCmd)
-
-	// Here you will define your flags and configuration settings.
-
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// getTorrentCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// getTorrentCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }

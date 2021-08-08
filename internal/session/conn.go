@@ -1,14 +1,12 @@
 package session
 
 import (
-	"bytes"
 	"fmt"
 	"net"
 	"time"
 
 	"gitlab.com/NebulousLabs/go-upnp"
 
-	"github.com/namvu9/bencode"
 	"github.com/namvu9/bitsy/internal/errors"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
 )
@@ -111,7 +109,9 @@ func (bl BoundedListener) Accept() (net.Conn, error) {
 		return nil, err
 	}
 
-	return Conn{conn, bl.closeCh}, nil
+	c := Conn{conn, bl.closeCh}
+
+	return c, nil
 }
 
 type upnpRes struct {
@@ -146,6 +146,9 @@ func ForwardPorts(ports []uint16) (uint16, error) {
 // client at addr with infoHash.
 func Handshake(conn net.Conn, infoHash [20]byte, peerID [20]byte) error {
 	msg := peer.HandshakeMessage{
+		// Pass in as arguments
+		PStr:     PStr,
+		PStrLen:  byte(len(PStr)),
 		InfoHash: infoHash,
 		PeerID:   peerID,
 	}
@@ -159,30 +162,12 @@ func Handshake(conn net.Conn, infoHash [20]byte, peerID [20]byte) error {
 		return err
 	}
 
-	var dict bencode.Dictionary
-	var m bencode.Dictionary
-	m.SetStringKey("ut_metadata", bencode.Integer(2))
-	dict.SetStringKey("m", &m)
-
-	payload, _ := bencode.Marshal(&dict)
-
-	conn.Write(peer.ExtendedMessage{
-		Code:    0,
-		Payload: payload,
-	}.Bytes())
-
 	return nil
 }
 
 func (s *Session) VerifyHandshake(msg peer.HandshakeMessage) error {
-	if !bytes.Equal(msg.PStr, []byte("BitTorrent protocol")) {
+	if msg.PStr != "BitTorrent protocol" {
 		err := errors.Newf("expected pStr %s but got %s\n", "BitTorrent protocol", msg.PStr)
-		return err
-	}
-
-	_, ok := s.swarms[msg.InfoHash]
-	if !ok {
-		err := errors.Newf("Unknown infoHash %v\n", msg.InfoHash)
 		return err
 	}
 

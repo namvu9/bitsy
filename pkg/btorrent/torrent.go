@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/namvu9/bencode"
-	"github.com/namvu9/bitsy/internal/errors" // TODO: REMOVE
+	"github.com/namvu9/bitsy/internal/errors"
 )
 
 // Torrent contains metadata for one or more files and wraps
@@ -25,6 +25,23 @@ type Torrent struct {
 type Pieces []struct {
 	index int
 	piece []byte
+}
+
+func (t *Torrent) VerifyInfoDict() bool {
+	info, ok := t.Info()
+	if !ok {
+		return false
+	}
+
+	data, err := bencode.Marshal(info)
+	if err != nil {
+		return false
+	}
+
+	refHash := t.InfoHash()
+	hash := sha1.Sum(data)
+
+	return bytes.Equal(refHash[:], hash[:])
 }
 
 func (t *Torrent) Stat() map[string]interface{} {
@@ -91,19 +108,34 @@ func (t *Torrent) VerifyPiece(i int, piece []byte) bool {
 	return bytes.Equal(hash[:], refHash)
 }
 
+func (t *Torrent) Bytes() []byte {
+	data, _ := bencode.Marshal(t.Dict())
+
+	return data
+}
+
 // Dict returns the torrent's underlying bencoded dictionary
 func (t *Torrent) Dict() *bencode.Dictionary {
 	return t.dict
 }
 
-func (t *Torrent) PieceLength() uint64 {
+func (t *Torrent) Description() string {
+	info, ok := t.Info()
+	if !ok {
+		return ""
+	}
+	s, _ := info.GetString("description")
+	return s
+}
+
+func (t *Torrent) PieceLength() FileSize {
 	info, ok := t.Info()
 	if !ok {
 		return 0
 	}
 	pieceLength, ok := info.GetInteger("piece length")
 
-	return uint64(pieceLength)
+	return FileSize(pieceLength)
 }
 
 type PieceHash []byte
@@ -227,7 +259,7 @@ func (t *Torrent) AnnounceList() [][]string {
 
 type File struct {
 	Name   string
-	Length uint64
+	Length FileSize
 	Path   string
 
 	// The SHA-1 hashes of the pieces that constitute the file
@@ -300,26 +332,31 @@ func (t *Torrent) Files() ([]File, error) {
 		fileLength, _ := info.GetInteger("length")
 		name, _ := info.GetString("name")
 
-		out = append(out, File{Name: name, Length: uint64(fileLength), Path: name, Pieces: pieces})
+		out = append(out, File{Name: name, Length: FileSize(fileLength), Path: name, Pieces: pieces})
 	}
 
 	for _, file := range files {
-		fDict, _ := file.ToDict()
-		fileLength, _ := fDict.GetInteger("length")
-		paths, _ := fDict.GetList("path")
+		var (
+			fDict, _      = file.ToDict()
+			fileLength, _ = fDict.GetInteger("length")
+			paths, _      = fDict.GetList("path")
+			segments      []string
+		)
 
-		var strPath string
-
-		for _, p := range paths {
-			s, _ := p.ToBytes()
-			strPath += path.Join(string(s))
+		for _, segment := range paths {
+			s, _ := segment.ToBytes()
+			segments = append(segments, string(s))
 		}
 
-		name, _ := paths[len(paths)-1].ToBytes()
-		fPieces, overlap := getPieces(int64(fileLength), pieces, int64(pieceLength))
+		var (
+			strPath          = path.Join(segments...)
+			name, _          = paths[len(paths)-1].ToBytes()
+			fPieces, overlap = getPieces(int64(fileLength), pieces, int64(pieceLength))
+		)
+
 		tf := File{
 			Name:   string(name),
-			Length: uint64(fileLength),
+			Length: FileSize(fileLength),
 			Path:   strPath,
 			Pieces: fPieces,
 		}
@@ -393,15 +430,19 @@ func (fs FileSize) String() string {
 // file on disk
 func Load(location string) (*Torrent, error) {
 	var op errors.Op = "torrent.Load"
+	p, err := url.PathUnescape(location)
+	if err != nil {
+		return nil, err
+	}
 
-	url, err := url.Parse(location)
+	url, err := url.Parse(p)
 	if err != nil {
 		return nil, errors.Wrap(err, op)
 	}
 
 	var t *Torrent
 	if url.Scheme == "magnet" {
-		t, err = loadFromMagnetLink(url)
+		t, err = LoadMagnetURL(url)
 		if err != nil {
 			return nil, errors.Wrap(err, op)
 		}
@@ -425,7 +466,7 @@ func Load(location string) (*Torrent, error) {
 	return t, nil
 }
 
-func loadFromMagnetLink(u *url.URL) (*Torrent, error) {
+func LoadMagnetURL(u *url.URL) (*Torrent, error) {
 	var op errors.Op = "torrent.loadFromMagnetLink"
 	var dict bencode.Dictionary
 
@@ -434,6 +475,7 @@ func loadFromMagnetLink(u *url.URL) (*Torrent, error) {
 	var trackerTier bencode.List
 	trs, ok := queries["tr"]
 	if !ok || len(trs) == 0 {
+		// DHT is currently not supported
 		err := errors.New("magnet link must specify at least 1 tracker")
 		return nil, errors.Wrap(err, op, errors.BadArgument)
 	}
@@ -468,28 +510,17 @@ func loadFromMagnetLink(u *url.URL) (*Torrent, error) {
 }
 
 func loadFromFile(path string) (*Torrent, error) {
-	var op errors.Op = "torrent.loadFromFile"
-
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
-		return nil, errors.Wrap(err, op, errors.IO)
+		return nil, err
 	}
 
-	var v bencode.Value
-	err = bencode.Unmarshal(data, &v)
+	d, err := bencode.UnmarshalDict(data)
 	if err != nil {
-		return nil, errors.Wrap(err, op)
+		return nil, err
 	}
 
-	d, ok := v.ToDict()
-	if !ok {
-		err := errors.New("bad torrent file")
-		return nil, errors.Wrap(err, op, errors.BadArgument)
-	}
-
-	t := &Torrent{dict: d}
-
-	return t, nil
+	return &Torrent{dict: d}, nil
 }
 
 // TODO: Validate torrent
@@ -558,91 +589,3 @@ func New() *Torrent {
 	}
 }
 
-//func (s *Swarm) AssembleTorrent(dstDir string) error {
-	//err := os.MkdirAll(dstDir, 0777)
-	//if err != nil {
-		//return err
-	//}
-
-	//files, err := s.Files()
-	//if err != nil {
-		//return err
-	//}
-
-	//offset := 0
-	//for _, file := range files {
-		//filePath := path.Join(dstDir, file.Name)
-		//outFile, err := os.Create(filePath)
-
-		//startIndex := offset / int(s.PieceLength())
-		//localOffset := offset % int(s.PieceLength())
-
-		//n, err := s.assembleFile(int(startIndex), uint64(localOffset), file.Length, outFile)
-		//if err != nil {
-			//return err
-		//}
-
-		//if n != int(file.Length) {
-			//return fmt.Errorf("expected file length to be %d but wrote %d\n", file.Length, n)
-		//}
-
-		//offset += n
-	//}
-
-	//return nil
-//}
-
-//func (s *Swarm) readPiece(index int) (*os.File, error) {
-	//path := path.Join(s.baseDir, s.HexHash(), fmt.Sprintf("%d.part", index))
-
-	//file, err := os.Open(path)
-	//if err != nil {
-		//return nil, err
-	//}
-
-	//return file, nil
-//}
-
-//func (s *Swarm) assembleFile(startIndex int, localOffset, fileSize uint64, w io.Writer) (int, error) {
-	//var totalWritten int
-
-	//index := startIndex
-	//file, err := s.readPiece(index)
-
-	//if err != nil {
-		//return 0, err
-	//}
-
-	//var buf []byte
-	//offset := localOffset
-	//for uint64(totalWritten) < fileSize {
-		//if left := fileSize - uint64(totalWritten); left < s.PieceLength() {
-			//buf = make([]byte, left)
-		//} else {
-			//buf = make([]byte, s.PieceLength())
-		//}
-
-		//n, err := file.ReadAt(buf, int64(offset))
-		//if err != nil && err != io.EOF {
-			//return totalWritten, err
-		//}
-
-		//n, err = w.Write(buf[:n])
-		//totalWritten += n
-		//if err != nil {
-			//return totalWritten, err
-		//}
-
-		//// load next piece
-		//index++
-		//if index < len(s.Pieces()) {
-			//file, err = s.readPiece(index)
-			//if err != nil {
-				//return totalWritten, err
-			//}
-			//offset = 0
-		//}
-	//}
-
-	//return totalWritten, nil
-//}

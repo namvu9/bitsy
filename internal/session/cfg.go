@@ -9,7 +9,7 @@ type Config struct {
 	// The specified ports will be tried in order. The first
 	// one that is successfully forwarded will be used for
 	// incoming connections
-	Port []uint16
+	Port uint16
 }
 
 // DEFAULTPORTS

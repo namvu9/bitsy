@@ -7,6 +7,47 @@ import (
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
 )
 
+func TestHandshakeMessage(t *testing.T) {
+	msg := peer.HandshakeMessage{
+		PStr:     "BitTorrent protocol",
+		PStrLen:  19,
+		InfoHash: [20]byte{1, 2, 3, 4},
+		PeerID:   [20]byte{4, 3, 2, 1},
+		Reserved: [8]byte{1, 3, 3, 7},
+	}
+
+	res := msg.Bytes()
+
+	if len(res) != 68 {
+		t.Errorf("len(handshakeMessage) want %d got %d", 68, len(res))
+	}
+
+	pStrLen := res[0]
+	if pStrLen != 19 {
+		t.Errorf("pstrlen want %d got %d", 19, pStrLen)
+	}
+
+	pStr := string(res[1:20])
+	if pStr != msg.PStr {
+		t.Errorf("pstr want %s got %s ", msg.PStr, pStr)
+	}
+
+	reserved := res[20:28]
+	if !bytes.Equal(reserved, msg.Reserved[:]) {
+		t.Errorf("Infohash want %v got %v", msg.Reserved, reserved)
+	}
+
+	infoHash := res[28:48]
+	if !bytes.Equal(infoHash, msg.InfoHash[:]) {
+		t.Errorf("Infohash want %v got %v", msg.InfoHash, infoHash)
+	}
+
+	peerID := res[48:68]
+	if !bytes.Equal(peerID, msg.PeerID[:]) {
+		t.Errorf("Infohash want %v got %v", msg.PeerID, peerID)
+	}
+}
+
 func TestMessage(t *testing.T) {
 	for i, test := range []struct {
 		msg       peer.Message
