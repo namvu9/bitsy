@@ -2,8 +2,9 @@ package session
 
 import (
 	"bytes"
-	"crypto/rand"
+	"context"
 	"fmt"
+	"math/rand"
 	"net"
 	"time"
 
@@ -74,6 +75,53 @@ func (s *Session) Init() (func() error, error) {
 		}
 	}()
 
+	go func() {
+		for {
+			for range s.swarm.MoarPeerCh {
+				fmt.Println("SWARM", s.swarm.Size())
+				if s.swarm.Size() > 10 {
+					time.Sleep(5 * time.Second)
+					continue
+				}
+
+				req := tracker.NewRequest(s.torrent.InfoHash(), s.port, PeerID)
+				for stat := range s.trackers[0].AnnounceS(context.Background(), req) {
+					fmt.Println("LEN", len(stat.Peers))
+					if len(stat.Peers) == 0 {
+						continue
+					}
+
+					rand.Seed(time.Now().UnixNano())
+					rand.Shuffle(len(stat.Peers), func(i, j int) {
+						stat.Peers[i], stat.Peers[j] = stat.Peers[j], stat.Peers[i]
+					})
+
+					dialCfg := peer.DialConfig{
+						InfoHash:   s.torrent.InfoHash(),
+						Timeout:    500 * time.Millisecond,
+						PeerID:     PeerID,
+						Extensions: Reserved,
+						PStr:       PStr,
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					fmt.Println("LOW SWARM DIALING MANY")
+					count := 0
+					for p := range peer.DialMany(ctx, stat.Peers, 10, dialCfg) {
+						if count > 10 {
+							cancel()
+							break
+
+						}
+						s.swarm.PeerCh <- p
+					}
+					cancel()
+				}
+
+				time.Sleep(5 * time.Second)
+			}
+		}
+	}()
+
 	return func() error { return nil }, nil
 }
 
@@ -134,7 +182,7 @@ func New(cfg Config, t btorrent.Torrent) *Session {
 		trackers = append(trackers, tracker.NewGroup(tier))
 	}
 
-	msgIn := make(chan swarm.Event)
+	msgIn := make(chan swarm.Event, 10)
 	swarm := swarm.New(t, msgIn)
 	go swarm.Init()
 

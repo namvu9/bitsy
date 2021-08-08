@@ -67,6 +67,21 @@ func (c *Client) Stop() {
 	c.emit(StateChange{To: STOPPED})
 }
 
+func (c *Client) nextNPieces(n int, exclude map[int]*Worker) []int {
+	var out []int
+
+	for i := range c.torrent.Pieces() {
+		if !c.pieces.Get(i) && exclude[i] == nil {
+			out = append(out, i)
+			if len(out) == n {
+				break
+			}
+		}
+	}
+
+	return out
+}
+
 func (c *Client) Start() error {
 	go c.emit(StateChange{To: STARTING})
 
@@ -85,22 +100,12 @@ func (c *Client) Start() error {
 	dataIn := make(chan peer.PieceMessage, 32)
 	c.dataIn = dataIn
 	go func() {
-		time.Sleep(5 * time.Second)
 		workers := make(map[int]*Worker)
-		nextPiece := 0
-		count := 0
-		for i := 0; count < 10; i++ {
-			nextPiece++
-			if nextPiece == len(c.torrent.Pieces()) {
-				break
-			}
-			if c.pieces.Get(nextPiece) {
-				continue
-			}
-			count++
-			w := c.DownloadPiece(uint32(nextPiece))
+		for _, pieceIdx := range c.nextNPieces(5, workers) {
+			fmt.Printf("DOWNLOADING %d\n", pieceIdx)
+			w := c.DownloadPiece(uint32(pieceIdx))
 			go w.Run()
-			workers[nextPiece] = w
+			workers[pieceIdx] = w
 		}
 
 		ticker := time.NewTicker(5 * time.Second)
@@ -140,27 +145,20 @@ func (c *Client) Start() error {
 
 						return
 					}
-					if nextPiece == len(c.torrent.Pieces()) {
-						break
-					}
 
-					for c.pieces.Get(nextPiece) {
-						// Skip until next missing piece
-						nextPiece++
+					for _, pieceIdx := range c.nextNPieces(1, workers) {
+						fmt.Printf("DOWNLOADING %d\n", pieceIdx)
+						w := c.DownloadPiece(uint32(pieceIdx))
+						w.Run()
+						workers[pieceIdx] = w
 					}
-					fmt.Printf("DOWNLOADING %d\n", nextPiece)
-					w := c.DownloadPiece(uint32(nextPiece))
-					w.Run()
-					workers[nextPiece] = w
-					nextPiece++
 				}
 			case <-ticker.C:
 				fmt.Println("TICK", len(workers))
 				go c.unchoke()
 				go c.choke()
-				for i, w := range workers {
+				for _, w := range workers {
 					if w.Idle() {
-						fmt.Println("RESTARTING", i, len(w.subpieces))
 						go w.Restart()
 					}
 				}
@@ -211,9 +209,6 @@ func (c *Client) choke() {
 
 }
 
-// TODO: Client should collect stats
-// Session: Sends out the stat if it can
-// Otherwise store the last snapshot of the stats
 func (c *Client) listen() {
 	for {
 		select {
@@ -245,7 +240,6 @@ func (c *Client) handleMessage(msg messageReceived) {
 			c.dataIn <- v
 		}()
 	case peer.RequestMessage:
-		fmt.Println("RECEIVED REQUEST")
 		c.handleRequestMessage(v, msg.sender)
 	}
 }
@@ -260,7 +254,6 @@ func (c *Client) Subscribe(p *peer.Peer) {
 					msg:    msg,
 				}
 			case <-c.doneCh:
-				fmt.Println("DONECH")
 				break
 			}
 		}
@@ -285,8 +278,6 @@ func (c *Client) emit(e ClientEvent) {
 	c.stateCh <- e
 }
 
-// TODO: Let the session handle swarm directly
-// Emit PeerLeave/PeerJoin event from swarm
 type ClientConfig struct {
 	InitState ClientState
 	MaxPeers  int

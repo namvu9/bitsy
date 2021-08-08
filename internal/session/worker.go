@@ -146,16 +146,35 @@ func (w *Worker) requestSubPiece(index uint32, offset uint32) error {
 	}
 
 	w.out <- swarm.MulticastMessage{
+		OrderBy: func(p1, p2 *peer.Peer) int {
+			// TODO: use uploadRate instead of total uploaded
+			return int(p1.Uploaded) - int(p2.Uploaded)
+		},
 		Filter: func(p *peer.Peer) bool {
 			return p.HasPiece(int(index))
 		},
-		Limit: 2,
+
+		Limit: 4,
 		Handler: func(peers []*peer.Peer) {
 			for _, p := range peers {
 				go p.Send(msg)
 			}
 		},
 	}
+
+	// Ask random peer
+	w.out <- swarm.MulticastMessage{
+		Filter: func(p *peer.Peer) bool {
+			return p.HasPiece(int(index))
+		},
+		Limit: 1,
+		Handler: func(peers []*peer.Peer) {
+			for _, p := range peers {
+				go p.Send(msg)
+			}
+		},
+	}
+
 
 	return nil
 }

@@ -19,76 +19,29 @@ type Swarm struct {
 	EventCh    chan Event
 	OutCh      chan Event
 	PeerCh     chan *peer.Peer
+	MoarPeerCh chan struct{}
 
 	peers []*peer.Peer
-	stats *Stats
+}
 
-	downloadDir string
+func (s *Swarm) Size() int {
+	return len(s.peers)
 }
 
 func New(t btorrent.Torrent, out chan Event) Swarm {
 	swarm := Swarm{
-		Torrent:    t,
-		PeerCh:     make(chan *peer.Peer, 32),
-		EventCh:    make(chan Event, 32),
-		OutCh:      out,
+		Torrent: t,
+		PeerCh:  make(chan *peer.Peer, 32),
+		EventCh: make(chan Event, 32),
+		OutCh:   out,
+		MoarPeerCh: make(chan struct{}, 32),
 	}
 
 	return swarm
 }
 
-func (s *Swarm) Stat() map[string]interface{} {
-	stats := make(map[string]interface{})
-
-	stats["torrent"] = s.HexHash()
-	stats["npeers"] = len(s.peers)
-
-	var (
-		interested  = 0
-		interesting = 0
-		choking     = 0
-		blocking    = 0
-		idle        = 0
-	)
-
-	for _, peer := range s.peers {
-		if peer.Interested {
-			interested++
-		}
-
-		if peer.Interesting {
-			interesting++
-		}
-
-		if peer.Choked {
-			choking++
-		}
-
-		if peer.Blocking {
-			blocking++
-		}
-
-		if time.Now().Sub(peer.LastMessageReceived) > 2*time.Minute {
-			idle++
-		}
-	}
-
-	stats["interested"] = interested
-	stats["interesting"] = interesting
-	stats["choking"] = choking
-	stats["blocking"] = blocking
-	stats["idle"] = idle
-
-	select {
-	case swarmStats := <-s.stats.outCh:
-		stats["stats"] = swarmStats.(StatEvent).payload
-	default:
-	}
-
-	return stats
-}
-
 func (s *Swarm) Init() {
+	ticker := time.NewTicker(5 * time.Second)
 	for {
 		select {
 		case p := <-s.PeerCh:
@@ -106,9 +59,18 @@ func (s *Swarm) Init() {
 			if propagate {
 				go s.publish(event)
 			}
+		case <-ticker.C:
+			fmt.Println("SWARM TICK", len(s.peers))
+			if len(s.peers) < 10 {
+				go func() {
+					s.MoarPeerCh <- NeedMOARPeers{}
+				}()
+			}
 		}
 	}
 }
+
+type NeedMOARPeers struct{}
 
 func (s *Swarm) choked() (choked []*peer.Peer, unchoked []*peer.Peer) {
 	for _, peer := range s.peers {

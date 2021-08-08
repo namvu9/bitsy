@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"fmt"
 	"net"
 	"net/url"
-	"strings"
 	"sync"
 	"time"
 
@@ -52,22 +50,6 @@ type TrackerStat struct {
 }
 
 type peerList []net.Addr
-
-func (ts TrackerStat) String() string {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("-----\n%s\n-----\n", ts.Url))
-	sb.WriteString(fmt.Sprintf("Seeders: %d\n", ts.Seeders))
-	sb.WriteString(fmt.Sprintf("Leechers: %d\n", ts.Leechers))
-	sb.WriteString(fmt.Sprintf("Peers: %d\n\n", len(ts.Peers)))
-
-	sb.WriteString(fmt.Sprintf("NextAnnounce: %s\n", ts.NextAnnounce.Format(time.ANSIC)))
-
-	if ts.Err != nil {
-		sb.WriteString(fmt.Sprintf("Error: %s\n", ts.Err))
-	}
-
-	return sb.String()
-}
 
 func (tg *TrackerGroup) Stat() []TrackerStat {
 	var out []TrackerStat

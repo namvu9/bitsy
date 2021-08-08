@@ -23,7 +23,6 @@ import (
 
 	"github.com/namvu9/bitsy/internal/session"
 	"github.com/namvu9/bitsy/pkg/btorrent"
-	"github.com/namvu9/bitsy/pkg/btorrent/tracker"
 	"github.com/spf13/cobra"
 )
 
@@ -68,17 +67,6 @@ to quickly create a Cobra application.`,
 		}
 		fmt.Printf("done\n")
 		fmt.Printf("Initiating session\n")
-
-		go func() {
-			group := tracker.NewGroup(t.AnnounceList()[0])
-			req := tracker.NewRequest(t.InfoHash(), port, session.PeerID)
-			for {
-				for range group.AnnounceS(context.Background(), req) {
-				}
-
-				time.Sleep(5 * time.Second)
-			}
-		}()
 
 		s := session.New(session.Config{
 			DownloadDir:    "./downloads",

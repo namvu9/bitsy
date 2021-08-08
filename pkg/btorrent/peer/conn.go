@@ -2,6 +2,7 @@ package peer
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -17,7 +18,7 @@ type DialConfig struct {
 
 // TODO: Do not handshake inside dial?
 func Dial(ctx context.Context, addr net.Addr, cfg DialConfig) (*Peer, error) {
-	conn, err := net.DialTimeout("tcp", addr.String(), cfg.Timeout)
+	conn, err := net.DialTimeout("tcp", addr.String(), 1*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +37,6 @@ func Dial(ctx context.Context, addr net.Addr, cfg DialConfig) (*Peer, error) {
 		Reserved: cfg.Extensions.ReservedBytes(),
 	}
 
-	conn.SetWriteDeadline(time.Now().Add(time.Second))
 	_, err = conn.Write(msg.Bytes())
 	if err != nil {
 		conn.Close()
@@ -78,9 +78,15 @@ func DialMany(ctx context.Context, addrs []net.Addr, batchSize int, cfg DialConf
 	out := make(chan *Peer, len(addrs))
 
 	go func() {
+		fmt.Println("DIALING MANY")
 		chunks := Chunk(addrs, batchSize)
 		for _, chunk := range chunks {
 			var wg sync.WaitGroup
+			select {
+			case <- ctx.Done():
+				return
+			default:
+			}
 
 			for _, addr := range chunk {
 				wg.Add(1)

@@ -73,6 +73,7 @@ var getTorrentCmd = &cobra.Command{
 		)
 
 		t, err = getMeta(ctx, t, 6881)
+
 		out := cmd.Flag("out")
 		if out != nil && out.Value.String() != "" {
 			if err := os.WriteFile(out.Value.String(), t.Bytes(), 0664); err != nil {
@@ -105,24 +106,29 @@ func foo(ctx context.Context, t btorrent.Torrent, peers []net.Addr) (*btorrent.T
 func getMeta(ctx context.Context, t *btorrent.Torrent, port uint16) (*btorrent.Torrent, error) {
 	res := make(chan btorrent.Torrent)
 	go func() {
+	start:
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
 		for stat := range announce(ctx, t, port) {
 			if len(stat.Peers) == 0 {
 				continue
 			}
 
-			go func(peers []net.Addr) {
-				for {
-					ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-					defer cancel()
-					t, err := foo(ctx, *t, peers)
-					if err == nil {
-						res <- *t
-						return 
-					}
-				}
+			ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			defer cancel()
 
-			}(stat.Peers)
+			t, err := foo(ctx, *t, stat.Peers)
+			if err == nil {
+				res <- *t
+				return
+			}
+
+			fmt.Println("FINITO")
 		}
+
+		fmt.Println("Unable to retrieve metadata, retrying")
+		goto start
 	}()
 
 	select {
@@ -175,8 +181,16 @@ func announce(ctx context.Context, t *btorrent.Torrent, port uint16) chan tracke
 					return
 				default:
 					res := tracker.AnnounceS(ctx, urls, req)
-					for stat := range res {
-						out <- stat
+					for {
+						select {
+						case r, ok := <- res:
+							if !ok {
+								return
+							}
+							out <- r
+						case <-ctx.Done():
+							return
+						}
 					}
 				}
 			}(urls, &wg)

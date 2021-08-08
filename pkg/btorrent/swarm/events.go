@@ -3,6 +3,8 @@ package swarm
 import (
 	"fmt"
 	"math/rand"
+	"sort"
+	"time"
 
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
 )
@@ -38,8 +40,8 @@ func (s *Swarm) handleEvent(e Event) (bool, error) {
 	case JoinEvent:
 		fmt.Println("PEERS", len(s.peers)+1)
 		v.Peer.OnClose(func(p *peer.Peer) {
-			s.EventCh <- LeaveEvent{Peer:p}
-		 })
+			s.EventCh <- LeaveEvent{Peer: p}
+		})
 		return s.addPeer(v.Peer)
 	case LeaveEvent:
 		fmt.Println("PEER LEFT", len(s.peers)-1)
@@ -55,9 +57,25 @@ func (s *Swarm) handleMulticastMessage(req MulticastMessage) (bool, error) {
 	go func() {
 		var res []*peer.Peer
 		count := 0
-		for _, peer := range s.peers {
+
+		cpy := make([]*peer.Peer, len(s.peers))
+		copy(cpy, s.peers)
+
+		if req.OrderBy != nil {
+			sort.SliceStable(cpy, func(i, j int) bool {
+				return req.OrderBy(cpy[i], cpy[j]) < 0
+			})
+
+		} else {
+			rand.Seed(time.Now().UnixNano())
+			rand.Shuffle(len(cpy), func(i, j int) {
+				cpy[i], cpy[j] = cpy[j], cpy[i]
+			})
+		}
+
+		for _, peer := range cpy {
 			n := rand.Int31n(100)
-			if n < 50 {
+			if n < 25 {
 				continue
 			}
 			if req.Limit > 0 && count == req.Limit {

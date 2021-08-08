@@ -152,47 +152,53 @@ func GetInfoDict(ctx context.Context, peers []net.Addr, cfg DialConfig) (*bencod
 	if len(peers) == 0 {
 		panic("expected at least 1 peer address")
 	}
-
-	for p := range DialMany(ctx, peers, batchSize, cfg) {
-		if !p.Extensions.IsEnabled(EXT_PROT) {
-			p.Close()
-			continue
-		}
-
-		ctx, cancel = context.WithCancel(ctx)
-		go func(p *Peer) {
-			defer func() {
+	ch := DialMany(ctx, peers, batchSize, cfg)
+	for {
+		select {
+		case out := <-res:
+			return out, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case p := <-ch:
+			if !p.Extensions.IsEnabled(EXT_PROT) {
 				p.Close()
-				cancel()
-			}()
-
-			if err := p.Send(extHandshake); err != nil {
-				return
+				continue
 			}
 
-			msg, ok := (<-p.Msg).(*ExtHandshakeMsg)
-			if !ok {
-				return
-			}
+			go func(p *Peer) {
+				ctx, cancel := context.WithCancel(ctx)
+				defer func() {
+					p.Close()
+					cancel()
+				}()
 
-			size, ok := msg.D().GetInteger(EXT_UT_META_SIZE)
-			if !ok {
-				return
-			}
+				if err := p.Send(extHandshake); err != nil {
+					return
+				}
 
-			code, ok := msg.M().GetInteger(EXT_UT_META)
-			if !ok {
-				return
-			}
+				msg, ok := (<-p.Msg).(*ExtHandshakeMsg)
+				if !ok {
+					return
+				}
 
-			info, err := getInfoDict(ctx, p, int(code), int(size))
-			if err != nil {
-				return
-			}
+				size, ok := msg.D().GetInteger(EXT_UT_META_SIZE)
+				if !ok {
+					return
+				}
 
-			res <- info
-		}(p)
+				code, ok := msg.M().GetInteger(EXT_UT_META)
+				if !ok {
+					return
+				}
+
+				info, err := getInfoDict(ctx, p, int(code), int(size))
+				if err != nil {
+					return
+				}
+
+				res <- info
+				return
+			}(p)
+		}
 	}
-
-	return <-res, nil
 }
