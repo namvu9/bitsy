@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math/rand"
 	"os"
 	"path"
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/namvu9/bitsy/internal/errors"
@@ -17,7 +17,6 @@ import (
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
 	"github.com/namvu9/bitsy/pkg/btorrent/swarm"
-	"github.com/rs/zerolog/log"
 )
 
 type ClientState int
@@ -32,6 +31,25 @@ const (
 	STOPPED
 )
 
+func (cs ClientState) String() string {
+	switch cs {
+	case STARTED:
+		return "started"
+	case ERROR:
+		return "Error"
+	case DONE:
+		return "Done"
+	case SEEDING:
+		return "Seeding"
+	case STARTING:
+		return "Starting"
+	case STOPPED:
+		return "Stopped"
+	default:
+		return ""
+	}
+}
+
 // Client represents the client in, and encapsulates
 // interactions with, a swarm for a particular torrent
 // the client is responsible for peer and piece selection
@@ -40,9 +58,10 @@ type Client struct {
 	state   ClientState
 	baseDir string
 	outDir  string
-	// stateCh emits an event whenever the state of the client
+
+	// StateCh emits an event whenever the state of the client
 	// changes
-	stateCh chan ClientEvent
+	StateCh chan swarm.Event
 
 	// SwarmCh
 	pieces  bits.BitField
@@ -55,11 +74,117 @@ type Client struct {
 
 	MsgIn  chan messageReceived
 	dataIn chan peer.PieceMessage
+
+	Pending      int
+	DownloadRate btorrent.FileSize
+	Uploaded     int
 }
 
 type messageReceived struct {
 	sender *peer.Peer
 	msg    peer.Message
+}
+
+type FileStat struct {
+	Index      int
+	Name       string
+	Size       btorrent.FileSize
+	Downloaded btorrent.FileSize
+}
+
+func (fs FileStat) String() string {
+	var sb strings.Builder
+
+	percent := float64(fs.Downloaded) / float64(fs.Size) * 100
+
+	fmt.Fprintf(&sb, "File: %s\n", fs.Name)
+	fmt.Fprintf(&sb, "Index: %d\n", fs.Index)
+	fmt.Fprintf(&sb, "Size: %s\n", fs.Size)
+	fmt.Fprintf(&sb, "Downloaded: %s (%.3f %%)\n", fs.Downloaded, percent)
+
+	return sb.String()
+}
+
+type ClientStat struct {
+	State        ClientState
+	Pieces       int
+	TotalPieces  int
+	DownloadRate btorrent.FileSize // per second
+	Downloaded   btorrent.FileSize
+	Left         btorrent.FileSize
+	Uploaded     btorrent.FileSize
+	Files        []FileStat
+	Pending      int
+
+	BaseDir string
+	OutDir  string
+}
+
+func (c ClientStat) String() string {
+	var sb strings.Builder
+
+	total := c.Downloaded + c.Left
+	percentage := float64(c.Downloaded) / float64(total) * 100
+
+	fmt.Fprintf(&sb, "State: %s\n", c.State)
+	fmt.Fprintf(&sb, "Uploaded: %s\n", c.Uploaded)
+	fmt.Fprintf(&sb, "Downloaded: %s (%.3f %%)\n", c.Downloaded, percentage)
+	fmt.Fprintf(&sb, "Download rate: %s / s \n", c.DownloadRate)
+	fmt.Fprintf(&sb, "Pieces pending: %d\n", c.Pending)
+
+	fmt.Fprint(&sb, "\n")
+	for _, file := range c.Files {
+		fmt.Fprint(&sb, file)
+		fmt.Fprint(&sb, "\n")
+	}
+
+	return sb.String()
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func (c *Client) Stat() ClientStat {
+	var fs []FileStat
+
+	files, err := c.torrent.Files()
+	if err == nil {
+		for i, file := range files {
+			var downloaded int
+			for _, piece := range file.Pieces {
+				if c.pieces.Get(c.torrent.GetPieceIndex(piece)) {
+					downloaded += int(c.torrent.PieceLength())
+				}
+			}
+
+			fs = append(fs, FileStat{
+				Index:      i,
+				Name:       file.Name,
+				Size:       file.Length,
+				Downloaded: btorrent.FileSize(min(int(file.Length), downloaded)),
+			})
+		}
+	}
+
+	return ClientStat{
+		State:        c.state,
+		Uploaded:     btorrent.FileSize(c.Uploaded),
+		Downloaded:   btorrent.FileSize(c.pieces.GetSum() * int(c.torrent.PieceLength())),
+		DownloadRate: c.DownloadRate,
+		Left:         btorrent.FileSize((len(c.torrent.Pieces()) - c.pieces.GetSum()) * int(c.torrent.PieceLength())),
+
+		Pieces:      c.pieces.GetSum(),
+		Pending:     c.Pending,
+		TotalPieces: len(c.torrent.Pieces()),
+		Files:       fs,
+
+		BaseDir: c.baseDir,
+		OutDir:  c.outDir,
+	}
 }
 
 func (c *Client) Stop() {
@@ -68,14 +193,14 @@ func (c *Client) Stop() {
 }
 
 func (c *Client) nextNPieces(n int, exclude map[int]*Worker) []int {
+	nPieces := len(c.torrent.Pieces())
+	count := min(n, nPieces-c.pieces.GetSum())
 	var out []int
 
-	for i := range c.torrent.Pieces() {
+	for len(out) < count {
+		i := int(rand.Int31n(int32(nPieces)))
 		if !c.pieces.Get(i) && exclude[i] == nil {
 			out = append(out, i)
-			if len(out) == n {
-				break
-			}
 		}
 	}
 
@@ -83,91 +208,159 @@ func (c *Client) nextNPieces(n int, exclude map[int]*Worker) []int {
 }
 
 func (c *Client) Start() error {
-	go c.emit(StateChange{To: STARTING})
+	c.emit(StateChange{To: STARTING})
 
 	if err := c.verifyPieces(); err != nil {
-		c.emit(StateChange{To: ERROR})
+		c.emit(StateChange{To: ERROR, Msg: err.Error()})
 		return err
 	}
 
-	fmt.Println("VERIFIED PIECES", c.pieces.GetSum(), len(c.torrent.Pieces()))
+	c.emit(StateChange{To: STARTED})
 
-	// Load and Verify pieces
-	// If not ok, set state to ERROR
-	go c.emit(StateChange{To: STARTED})
 	go c.listen()
 
-	dataIn := make(chan peer.PieceMessage, 32)
-	c.dataIn = dataIn
-	go func() {
-		workers := make(map[int]*Worker)
-		for _, pieceIdx := range c.nextNPieces(5, workers) {
-			fmt.Printf("DOWNLOADING %d\n", pieceIdx)
-			w := c.DownloadPiece(uint32(pieceIdx))
-			go w.Run()
-			workers[pieceIdx] = w
-		}
+	if !c.done() {
+		go c.download()
+	} else {
+		// TODO: Check if data has been written
+		c.AssembleTorrent(path.Join(c.outDir, c.torrent.Name()))
 
-		ticker := time.NewTicker(5 * time.Second)
-		for {
-			select {
-			case msg := <-c.dataIn:
-				w, ok := workers[int(msg.Index)]
-				if !ok {
-					continue
+		c.emit(StateChange{To: SEEDING})
+	}
+
+	return nil
+}
+
+func (c *Client) download() {
+	var (
+		workers = make(map[int]*Worker)
+		ticker  = time.NewTicker(5 * time.Second)
+	)
+
+	go c.DownloadN(5, workers)
+
+	last := time.Now()
+
+	batchSize := 5 * c.torrent.PieceLength()
+	downloadRate := 0.0
+	count := 0
+
+	for {
+		select {
+		case msg := <-c.dataIn:
+			done, err := c.handlePieceMessage(msg, workers)
+			if err != nil || !done {
+				continue
+			}
+
+			if done {
+				count++
+				if count == 5 {
+					diffT := time.Now().Sub(last)
+
+					rate := float64(batchSize) / diffT.Seconds()
+					downloadRate = rate
+
+					last = time.Now()
+					count = 0
 				}
-				if ok && !w.IsComplete() {
-					w.in <- msg
+
+				fmt.Println("Downloaded", msg.Index, len(workers))
+				c.emit(DownloadCompleteEvent{
+					Index:        int(msg.Index),
+					DownloadRate: btorrent.FileSize(downloadRate),
+					Pending:      len(workers),
+				})
+			}
+
+			if c.done() {
+				err := c.AssembleTorrent(path.Join(c.outDir, c.torrent.Name()))
+				if err != nil {
+					c.emit(StateChange{To: ERROR, Msg: err.Error()})
+					return
 				}
-				if w.IsComplete() {
-					c.pieces.Set(int(w.index))
-					delete(workers, int(w.index))
-					fmt.Printf("COMPLETED %d (%d / %d)\n", msg.Index, c.pieces.GetSum(), len(c.torrent.Pieces()))
 
-					c.msgOut <- swarm.MulticastMessage{
-						Filter: func(p *peer.Peer) bool {
-							return !p.HasPiece(int(w.index))
-						},
-						Handler: func(peers []*peer.Peer) {
-							for _, p := range peers {
-								p.Send(peer.HaveMessage{Index: w.index})
-							}
-						},
-					}
+				c.emit(StateChange{To: SEEDING})
+				return
+			}
+			c.DownloadN(1, workers)
+		// Finished downloading piece
+		case <-ticker.C:
+			go c.unchoke()
+			go c.choke()
 
-					if c.pieces.GetSum() == len(c.torrent.Pieces()) {
-						fmt.Println("ASSEMBLING")
-						err := c.AssembleTorrent(path.Join(c.outDir, c.torrent.Name()))
-						if err != nil {
-							fmt.Println("COULDNT ASSEMBLE torrent files")
-						}
-						fmt.Println("ASSEMBLE COMPLETE")
-
-						return
-					}
-
-					for _, pieceIdx := range c.nextNPieces(1, workers) {
-						fmt.Printf("DOWNLOADING %d\n", pieceIdx)
-						w := c.DownloadPiece(uint32(pieceIdx))
-						w.Run()
-						workers[pieceIdx] = w
-					}
-				}
-			case <-ticker.C:
-				fmt.Println("TICK", len(workers))
-				go c.unchoke()
-				go c.choke()
-				for _, w := range workers {
-					if w.Idle() {
-						go w.Restart()
-					}
+			count := 0
+			for _, w := range workers {
+				if w.Idle() {
+					count++
+					go w.Restart()
 				}
 			}
 
+			if count > 5 {
+				c.DownloadN(5, workers)
+			}
 		}
-	}()
+	}
+}
 
-	return nil
+func (c *Client) handlePieceMessage(msg peer.PieceMessage, workers map[int]*Worker) (bool, error) {
+	w, ok := workers[int(msg.Index)]
+	if !ok {
+		return false, fmt.Errorf("%d: unknown piece", msg.Index)
+	}
+
+	w.in <- msg
+
+	if w.IsComplete() {
+		delete(workers, int(w.index))
+		c.pieces.Set(int(w.index))
+
+		c.msgOut <- HaveMessage(int(w.index))
+		//c.msgOut <- CancelMessage(int(w.index))
+		return true, nil
+	}
+
+	return false, nil
+}
+
+func HaveMessage(idx int) swarm.MulticastMessage {
+	return swarm.MulticastMessage{
+		Filter: func(p *peer.Peer) bool {
+			return !p.HasPiece(idx)
+		},
+		Handler: func(peers []*peer.Peer) {
+			for _, p := range peers {
+				p.Send(peer.HaveMessage{Index: uint32(idx)})
+			}
+		},
+	}
+}
+
+func CancelMessage(idx int) swarm.MulticastMessage {
+	return swarm.MulticastMessage{
+		Filter: func(p *peer.Peer) bool {
+			return p.HasPiece(idx)
+		},
+		Handler: func(peers []*peer.Peer) {
+			for _, p := range peers {
+				p.Send(peer.CancelMessage{Index: uint32(idx)})
+			}
+		},
+	}
+}
+
+func (c *Client) done() bool {
+	return c.pieces.GetSum() == len(c.torrent.Pieces())
+}
+
+func (c *Client) DownloadN(n int, workers map[int]*Worker) {
+	for _, pieceIdx := range c.nextNPieces(n, workers) {
+		workers[pieceIdx] = c.DownloadPiece(uint32(pieceIdx))
+		c.emit(DownloadEvent{
+			Pending: len(workers),
+		})
+	}
 }
 
 func (c *Client) unchoke() {
@@ -178,7 +371,7 @@ func (c *Client) unchoke() {
 			return p.Choked
 		},
 		Handler: func(p []*peer.Peer) {
-			if len(p) < 5 {
+			if len(p) == 0 {
 				return
 			}
 			last := p[len(p)-1]
@@ -199,7 +392,7 @@ func (c *Client) choke() {
 			return !p.Choked
 		},
 		Handler: func(p []*peer.Peer) {
-			if len(p) < 5 {
+			if len(p) == 0 {
 				return
 			}
 			last := p[len(p)-1]
@@ -219,7 +412,7 @@ func (c *Client) listen() {
 			case swarm.JoinEvent:
 				p := v.Peer
 				p.Send(peer.BitFieldMessage{BitField: c.pieces})
-				c.Subscribe(p)
+				c.subscribe(p)
 			}
 		case msg := <-c.MsgIn:
 			c.handleMessage(msg)
@@ -244,7 +437,7 @@ func (c *Client) handleMessage(msg messageReceived) {
 	}
 }
 
-func (c *Client) Subscribe(p *peer.Peer) {
+func (c *Client) subscribe(p *peer.Peer) {
 	go func() {
 		for {
 			select {
@@ -262,20 +455,33 @@ func (c *Client) Subscribe(p *peer.Peer) {
 
 type ClientEvent interface{}
 type StateChange struct {
-	To ClientState
+	To  ClientState
+	Msg string
 }
 
-type ClientCmd interface{}
-type StopCmd struct{}
+type DownloadEvent struct {
+	Pending int
+}
 
-// Move downloader to client
-// Pipe messages from peer to client
+type DownloadCompleteEvent struct {
+	Index        int
+	DownloadRate btorrent.FileSize
+	Pending      int
+}
+
 func (c *Client) emit(e ClientEvent) {
 	switch v := e.(type) {
 	case StateChange:
 		c.state = v.To
+	case DownloadCompleteEvent:
+		c.DownloadRate = v.DownloadRate
+		c.Pending = v.Pending
+	case DownloadEvent:
+		c.Pending = v.Pending
 	}
-	c.stateCh <- e
+	go func() {
+		c.StateCh <- c.Stat()
+	}()
 }
 
 type ClientConfig struct {
@@ -290,7 +496,7 @@ func NewClient(t btorrent.Torrent, cfg ClientConfig) *Client {
 		baseDir: cfg.BaseDir,
 		outDir:  cfg.OutDir,
 		state:   cfg.InitState,
-		stateCh: make(chan ClientEvent),
+		StateCh: make(chan swarm.Event),
 		doneCh:  make(chan struct{}),
 		MsgIn:   make(chan messageReceived, 2*cfg.MaxPeers),
 		dataIn:  make(chan peer.PieceMessage, 32),
@@ -301,15 +507,12 @@ func NewClient(t btorrent.Torrent, cfg ClientConfig) *Client {
 	}
 }
 
-// DownloadPieece spawns a worker that manages requesting
+// DownloadPiece spawns a worker that manages requesting
 // subpieces from peers and will retransmit requests if the
 // download begins to stall
-// out = broadcast channel
-// done = downloaded piece
 func (c *Client) DownloadPiece(index uint32) *Worker {
-	t := c.torrent
-
 	var (
+		t           = c.torrent
 		size        = t.Length()
 		pieceLength = t.PieceLength()
 	)
@@ -318,8 +521,7 @@ func (c *Client) DownloadPiece(index uint32) *Worker {
 		pieceLength = size % pieceLength
 	}
 
-	lock := sync.Mutex{}
-	return &Worker{
+	w := &Worker{
 		Started:      time.Now(),
 		LastModified: time.Now(),
 
@@ -333,18 +535,20 @@ func (c *Client) DownloadPiece(index uint32) *Worker {
 		subpieces:   map[uint32][]byte{},
 		torrent:     c.torrent,
 		baseDir:     c.baseDir,
-		lock:        &lock,
 
 		out: c.msgOut,
 	}
+
+	w.Run()
+
+	return w
 }
 
 func (c *Client) handleBitfieldMessage(e peer.BitFieldMessage, p *peer.Peer) (bool, error) {
-	s := c.torrent
-
 	var (
+		t        = c.torrent
 		maxIndex = bits.GetMaxIndex(e.BitField)
-		pieces   = s.Pieces()
+		pieces   = t.Pieces()
 	)
 
 	if maxIndex >= len(pieces) {
@@ -382,6 +586,7 @@ func (c *Client) handleRequestMessage(req peer.RequestMessage, p *peer.Peer) (bo
 		Offset: req.Offset,
 		Piece:  data,
 	}
+	c.Uploaded += len(data)
 
 	go p.Send(msg)
 
@@ -481,10 +686,8 @@ func (c *Client) assembleFile(startIndex int, localOffset, fileSize uint64, w io
 }
 func (c *Client) verifyPieces() error {
 	var (
-		op         errors.Op = "(*Swarm).init"
-		hexHash              = c.torrent.HexHash()
-		torrentDir           = path.Join(c.baseDir, hexHash)
-		infoLogger           = log.Info().Str("torrent", hexHash).Str("op", op.String())
+		hexHash    = c.torrent.HexHash()
+		torrentDir = path.Join(c.baseDir, hexHash)
 	)
 
 	err := os.MkdirAll(torrentDir, 0777)
@@ -494,13 +697,9 @@ func (c *Client) verifyPieces() error {
 
 	files, err := os.ReadDir(torrentDir)
 	if err != nil {
-		return errors.Wrap(err, op, errors.IO)
+		return err
 	}
 
-	infoLogger.Msg("Initializing torrent")
-	infoLogger.Msgf("Verifying %d pieces", len(files))
-
-	var verified int
 	for _, file := range files {
 		var (
 			matchString = fmt.Sprintf(`(\d+).part`)
@@ -520,29 +719,23 @@ func (c *Client) verifyPieces() error {
 
 			piecePath := path.Join(torrentDir, file.Name())
 			if ok := c.loadAndVerify(n, piecePath); ok {
-				verified++
+				c.pieces.Set(n)
 			}
 		}
 	}
 
-	infoLogger.Msgf("Verified %d pieces", verified)
+	fmt.Printf("Verified %d pieces (%d)\n", c.pieces.GetSum(), len(c.torrent.Pieces()))
 
 	return nil
 }
 
-func (c *Client) loadAndVerify(index int, piecePath string) bool {
-	piece, err := os.ReadFile(piecePath)
+func (c *Client) loadAndVerify(index int, location string) bool {
+	piece, err := os.ReadFile(location)
 	if err != nil {
-		log.Err(err).Msgf("failed to load piece piece at %s", piecePath)
 		return false
 	}
 
 	if !c.torrent.VerifyPiece(index, piece) {
-		return false
-	}
-
-	if err := c.pieces.Set(index); err != nil {
-		log.Err(err).Msg("failed to set bitfield")
 		return false
 	}
 

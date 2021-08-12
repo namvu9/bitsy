@@ -1,7 +1,6 @@
 package swarm
 
 import (
-	"fmt"
 	"math/rand"
 	"sort"
 	"time"
@@ -38,13 +37,11 @@ type MulticastMessage struct {
 func (s *Swarm) handleEvent(e Event) (bool, error) {
 	switch v := e.(type) {
 	case JoinEvent:
-		fmt.Println("PEERS", len(s.peers)+1)
 		v.Peer.OnClose(func(p *peer.Peer) {
 			s.EventCh <- LeaveEvent{Peer: p}
 		})
 		return s.addPeer(v.Peer)
 	case LeaveEvent:
-		fmt.Println("PEER LEFT", len(s.peers)-1)
 		return s.removePeer(v.Peer)
 	case MulticastMessage:
 		return s.handleMulticastMessage(v)
@@ -58,8 +55,10 @@ func (s *Swarm) handleMulticastMessage(req MulticastMessage) (bool, error) {
 		var res []*peer.Peer
 		count := 0
 
-		cpy := make([]*peer.Peer, len(s.peers))
-		copy(cpy, s.peers)
+		var cpy []*peer.Peer
+		for _, p := range s.peers {
+			cpy = append(cpy, p)
+		}
 
 		if req.OrderBy != nil {
 			sort.SliceStable(cpy, func(i, j int) bool {

@@ -58,7 +58,7 @@ to quickly create a Cobra application.`,
 			ctx, cancel := withTimeout(context.Background(), 10*time.Second)
 			t2, err := getMeta(ctx, t, port)
 			if err != nil {
-				fmt.Println("Failed to fetch metadata", err)
+				//fmt.Println("Failed to fetch metadata", err)
 				cancel()
 				return
 			}

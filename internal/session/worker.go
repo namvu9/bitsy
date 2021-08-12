@@ -43,7 +43,7 @@ type Worker struct {
 	subpieces   map[uint32][]byte
 	torrent     btorrent.Torrent
 	baseDir     string
-	lock        *sync.Mutex
+	lock        sync.Mutex
 }
 
 func (w *Worker) Idle() bool {
@@ -62,8 +62,6 @@ func (w *Worker) Progress() float32 {
 }
 
 func (w *Worker) Run() {
-	//now := time.Now()
-
 	go func() {
 		w.RequestPiece(w.index)
 		for {
@@ -75,7 +73,11 @@ func (w *Worker) Run() {
 				w.lock.Unlock()
 
 				if w.IsComplete() {
-					w.savePiece(int(w.index), w.Bytes())
+					err := w.savePiece(int(w.index), w.Bytes())
+					if err != nil {
+						fmt.Println("FAILED TO SAVE", err)
+					}
+					
 					return
 				}
 			}
@@ -151,7 +153,8 @@ func (w *Worker) requestSubPiece(index uint32, offset uint32) error {
 			return int(p1.Uploaded) - int(p2.Uploaded)
 		},
 		Filter: func(p *peer.Peer) bool {
-			return p.HasPiece(int(index))
+			return !p.Blocking && p.HasPiece(int(index)) && !p.IsServing(index, offset)
+			//return p.HasPiece(int(index))
 		},
 
 		Limit: 4,

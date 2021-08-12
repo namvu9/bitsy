@@ -583,6 +583,16 @@ func LoadDir(dir string) ([]*Torrent, error) {
 	return out, nil
 }
 
+func (t Torrent) GetPieceIndex(hash []byte) int {
+	for i, piece := range t.Pieces() {
+		if bytes.Equal(piece, hash) {
+			return i
+		}
+	}
+
+	return -1
+}
+
 func New() *Torrent {
 	return &Torrent{
 		&bencode.Dictionary{},

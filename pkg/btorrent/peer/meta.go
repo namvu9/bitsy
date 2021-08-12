@@ -160,6 +160,9 @@ func GetInfoDict(ctx context.Context, peers []net.Addr, cfg DialConfig) (*bencod
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case p := <-ch:
+			if p == nil {
+				continue
+			}
 			if !p.Extensions.IsEnabled(EXT_PROT) {
 				p.Close()
 				continue

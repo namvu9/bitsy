@@ -72,11 +72,11 @@ var getTorrentCmd = &cobra.Command{
 			start = time.Now()
 		)
 
-		t, err = getMeta(ctx, t, 6881)
+		t, _ = getMeta(ctx, t, 6881)
 
 		out := cmd.Flag("out")
 		if out != nil && out.Value.String() != "" {
-			if err := os.WriteFile(out.Value.String(), t.Bytes(), 0664); err != nil {
+			if err := os.WriteFile(out.Value.String(), t.Bytes(), 0777); err != nil {
 				log("%s\n", err)
 				return
 			}
@@ -91,7 +91,6 @@ var getTorrentCmd = &cobra.Command{
 func foo(ctx context.Context, t btorrent.Torrent, peers []net.Addr) (*btorrent.Torrent, error) {
 	info, err := requestMeta(ctx, peers, &t)
 	if err != nil {
-		log(err.Error())
 		return nil, err
 	}
 
@@ -123,11 +122,8 @@ func getMeta(ctx context.Context, t *btorrent.Torrent, port uint16) (*btorrent.T
 				res <- *t
 				return
 			}
-
-			fmt.Println("FINITO")
 		}
 
-		fmt.Println("Unable to retrieve metadata, retrying")
 		goto start
 	}()
 
