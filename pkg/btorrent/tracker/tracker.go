@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/namvu9/bitsy/pkg/btorrent"
-	"github.com/rs/zerolog/log"
 )
 
 // UDP Tracker Actions
@@ -122,7 +121,6 @@ func (tg *TrackerGroup) Announce(req Request) map[string]PeerInfo {
 
 			res, err := tracker.Announce(req)
 			if err != nil {
-				log.Err(err).Msg("Announce failed")
 				wg.Done()
 				return
 			}
@@ -146,7 +144,6 @@ func (tg *TrackerGroup) Announce(req Request) map[string]PeerInfo {
 		}
 	}
 
-	log.Printf("Discovered %d peers\n", len(out))
 	return out
 }
 

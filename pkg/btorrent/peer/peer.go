@@ -9,7 +9,6 @@ import (
 	"github.com/namvu9/bencode"
 	"github.com/namvu9/bitsy/internal/errors"
 	"github.com/namvu9/bitsy/pkg/bits"
-	"github.com/rs/zerolog/log"
 )
 
 // Peer represents a connection to another peer in the
@@ -157,8 +156,7 @@ func (p *Peer) Listen(ctx context.Context) {
 		}
 
 		if err != nil {
-			log.Err(err).Msgf("failed to unmarshal message from %s", p.RemoteAddr())
-			return
+			continue
 		}
 
 		switch v := msg.(type) {

@@ -2,6 +2,7 @@ package client
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path"
 	"sync"
@@ -10,7 +11,6 @@ import (
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
 	"github.com/namvu9/bitsy/pkg/btorrent/swarm"
-	"github.com/rs/zerolog/log"
 )
 
 // lenSubpiece is the maximum length to use when requesting

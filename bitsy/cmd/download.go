@@ -19,15 +19,46 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"time"
 
 	"github.com/namvu9/bitsy/internal/session"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 var files []int
+
+// TODO: Use config
+func BaseDir() (string, error) {
+	d, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	baseDir := path.Join(d, ".bitsy")
+	err = os.MkdirAll(baseDir, 0666)
+	if err != nil {
+		return "", err
+	}
+
+	return baseDir, nil
+}
+
+func DownloadDir() (string, error) {
+	d, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+
+	downloadDir := path.Join(d, "Downloads")
+	err = os.MkdirAll(downloadDir, 0666)
+	if err != nil {
+		return "", err
+	}
+
+	return downloadDir, nil
+}
 
 // downloadCmd represents the download command
 var downloadCmd = &cobra.Command{
@@ -53,10 +84,11 @@ bitsy download /path/to/torrent
 			os.Exit(1)
 		}
 
-
 		fmt.Printf("--------\n%s\n-------\n", t.Name())
 		fmt.Printf("%s\n", t.HexHash())
 		fmt.Printf("Forwarding port... ")
+
+		// TODO: use port from config
 		port, err := session.ForwardPorts([]uint16{6881})
 		if err != nil {
 			fmt.Println("Failed to find open port", err)
@@ -78,9 +110,21 @@ bitsy download /path/to/torrent
 		fmt.Printf("done\n")
 		fmt.Printf("Initiating session\n")
 
+		baseDir, err := BaseDir()
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		downloadDir, err := DownloadDir()
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
 		s := session.New(session.Config{
-			BaseDir:        viper.GetString("baseDir"),
-			DownloadDir:    viper.GetString("downloadDir"),
+			BaseDir:        baseDir,
+			DownloadDir:    downloadDir,
 			MaxConnections: 50,
 			IP:             "192.168.0.4",
 			Port:           port,
@@ -97,15 +141,6 @@ bitsy download /path/to/torrent
 func init() {
 	rootCmd.AddCommand(downloadCmd)
 
-	downloadCmd.Flags().IntSliceVarP(&files, "files", "f", []int{}, "Download specific files")
-
-	// Here you will define your flags and configuration settings.
-
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// downloadCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// downloadCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	downloadCmd.Flags().
+		IntSliceVarP(&files, "files", "f", []int{}, "Download specific files")
 }

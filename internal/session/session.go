@@ -18,7 +18,6 @@ import (
 	"github.com/namvu9/bitsy/pkg/btorrent/swarm"
 	"github.com/namvu9/bitsy/pkg/btorrent/tracker"
 	"github.com/namvu9/bitsy/pkg/ch"
-	"github.com/rs/zerolog/log"
 )
 
 var PeerID = [20]byte{'-', 'B', 'T', '0', '0', '0', '0', '-'}
@@ -149,7 +148,6 @@ func (s *Session) listen() error {
 
 		err = s.acceptHandshake(conn)
 		if err != nil {
-			log.Err(err).Msgf("Handshake failed: %s", conn.RemoteAddr())
 			conn.Close()
 		}
 	}

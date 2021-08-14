@@ -187,7 +187,7 @@ func (c *Client) download() {
 				return
 			}
 
-			if len(workers) < 10 {
+			if len(workers) < 30 {
 				c.downloadN(1, workers)
 			}
 		// Finished downloading piece
@@ -212,7 +212,7 @@ func (c *Client) download() {
 				}
 			}
 
-			if idleCount > 3 {
+			if idleCount > 3 && len(workers) < 30 {
 				c.downloadN(1, workers)
 			}
 		}
