@@ -21,19 +21,19 @@ import (
 type ClientState int
 
 const (
-	ERROR ClientState = iota
+	STOPPED ClientState = iota
+	STARTING
+	DOWNLOADING
 	DONE
 	FETCHING_META
 	SEEDING
-	STARTED
-	STARTING
-	STOPPED
+	ERROR
 )
 
 func (cs ClientState) String() string {
 	switch cs {
-	case STARTED:
-		return "started"
+	case DOWNLOADING:
+		return "Downloading"
 	case ERROR:
 		return "Error"
 	case DONE:
@@ -108,7 +108,7 @@ func (c *Client) Start(ctx context.Context) error {
 
 	if !c.done() {
 		go c.download()
-		c.emit(StateChange{To: STARTED})
+		c.emit(StateChange{To: DOWNLOADING})
 	} else {
 		c.emit(StateChange{To: SEEDING})
 	}
@@ -116,16 +116,32 @@ func (c *Client) Start(ctx context.Context) error {
 	return nil
 }
 
+// TODO: TEST
+// This sometimes blocks the program...
 func (c *Client) nextNPieces(n int, exclude map[int]*worker) []int {
-	nPieces := len(c.torrent.Pieces())
-	count := min(n, nPieces-c.pieces.GetSum()-len(exclude))
+	var remaining []int
+
+	for i := range c.torrent.Pieces() {
+		if c.pieces.Get(i) {
+			continue
+		}
+
+		if c.ignoredPieces.Get(i) {
+			continue
+		}
+
+		if exclude[i] != nil {
+			continue
+		}
+
+		remaining = append(remaining, i)
+	}
+	count := min(n, len(remaining))
 	var out []int
 
 	for len(out) < count {
-		i := int(rand.Int31n(int32(nPieces)))
-		if !c.pieces.Get(i) && exclude[i] == nil && !c.ignoredPieces.Get(i) {
-			out = append(out, i)
-		}
+		i := int(rand.Int31n(int32(count)))
+		out = append(out, remaining[i])
 	}
 
 	return out
@@ -158,13 +174,12 @@ func (c *Client) download() {
 			}
 
 			if done {
-				go c.emit(DownloadCompleteEvent{
+				c.emit(DownloadCompleteEvent{
 					Index:        int(msg.Index),
 					DownloadRate: btorrent.Size(downloadRate),
 					Pending:      len(workers),
 				})
 			}
-
 			c.assembleTorrent(path.Join(c.outDir, c.torrent.Name()))
 
 			if c.done() {
@@ -182,7 +197,7 @@ func (c *Client) download() {
 
 			downloadRate = float64(batch) / 2.0
 
-			c.emit(DownloadCompleteEvent{
+			go c.emit(DownloadCompleteEvent{
 				Index:        int(-1),
 				DownloadRate: btorrent.Size(downloadRate),
 				Pending:      len(workers),
@@ -198,7 +213,7 @@ func (c *Client) download() {
 			}
 
 			if idleCount > 3 {
-				go c.downloadN(1, workers)
+				c.downloadN(1, workers)
 			}
 		}
 	}

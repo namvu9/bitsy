@@ -23,13 +23,12 @@ type File struct {
 	Pieces [][]byte
 }
 
-// The second return value reports whether the file is
-func getFileData(f bencode.Value, t Torrent) (File, bool) {
+func getFileData(f bencode.Value, pieces [][]byte, t Torrent) (File, bool) {
 	var (
 		fDict, _ = f.ToDict()
 
 		fileLength, _    = fDict.GetInteger("length")
-		fPieces, overlap = getPieces(int64(fileLength), t.Pieces(), int64(t.PieceLength()))
+		fPieces, overlap = getPieces(int64(fileLength), pieces, int64(t.PieceLength()))
 
 		segments, _ = fDict.GetList("path")
 		p           = getFilePath(segments)

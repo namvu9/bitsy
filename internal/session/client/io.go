@@ -33,7 +33,7 @@ func (c *Client) assembleTorrent(dstDir string) error {
 		}
 
 		if n != int(file.Length) {
-			return fmt.Errorf("expected file length to be %d but wrote %d\n", file.Length, n)
+			return fmt.Errorf("expected file length to be %d but wrote %d", file.Length, n)
 		}
 
 		offset += n

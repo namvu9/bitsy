@@ -93,8 +93,8 @@ to quickly create a Cobra application.`,
 		fmt.Printf("Total size: %s\n", t.Length())
 		fmt.Println("Files:")
 
-		for _, file := range t.Files() {
-			fmt.Printf("  %s %s\n", file.FullPath, file.Length)
+		for i, file := range t.Files() {
+			fmt.Printf("  %d: %s %s\n", i, file.FullPath, file.Length)
 		}
 		fmt.Printf("Trackers:\n")
 		for _, tracker := range t.AnnounceList()[0] {

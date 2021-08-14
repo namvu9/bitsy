@@ -292,7 +292,7 @@ func (t *Torrent) Files() []File {
 
 	// Multi-file torrent
 	for _, file := range files {
-		tf, overlap := getFileData(file, *t)
+		tf, overlap := getFileData(file, pieces, *t)
 		out = append(out, tf)
 
 		if overlap {
