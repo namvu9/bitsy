@@ -1,0 +1,85 @@
+# github.com/fsnotify/fsnotify v1.4.9
+github.com/fsnotify/fsnotify
+# github.com/hashicorp/hcl v1.0.0
+github.com/hashicorp/hcl
+github.com/hashicorp/hcl/hcl/ast
+github.com/hashicorp/hcl/hcl/parser
+github.com/hashicorp/hcl/hcl/printer
+github.com/hashicorp/hcl/hcl/scanner
+github.com/hashicorp/hcl/hcl/strconv
+github.com/hashicorp/hcl/hcl/token
+github.com/hashicorp/hcl/json/parser
+github.com/hashicorp/hcl/json/scanner
+github.com/hashicorp/hcl/json/token
+# github.com/inconshreveable/mousetrap v1.0.0
+github.com/inconshreveable/mousetrap
+# github.com/magiconair/properties v1.8.5
+github.com/magiconair/properties
+# github.com/mitchellh/mapstructure v1.4.1
+github.com/mitchellh/mapstructure
+# github.com/namvu9/bencode v0.0.0-20210806062838-4c3976f5e18d
+## explicit
+github.com/namvu9/bencode
+# github.com/pelletier/go-toml v1.9.3
+github.com/pelletier/go-toml
+# github.com/spf13/afero v1.6.0
+github.com/spf13/afero
+github.com/spf13/afero/mem
+# github.com/spf13/cast v1.3.1
+github.com/spf13/cast
+# github.com/spf13/cobra v1.2.1
+## explicit
+github.com/spf13/cobra
+# github.com/spf13/jwalterweatherman v1.1.0
+github.com/spf13/jwalterweatherman
+# github.com/spf13/pflag v1.0.5
+github.com/spf13/pflag
+# github.com/spf13/viper v1.8.1
+## explicit
+github.com/spf13/viper
+# github.com/subosito/gotenv v1.2.0
+github.com/subosito/gotenv
+# gitlab.com/NebulousLabs/fastrand v0.0.0-20181126182046-603482d69e40
+gitlab.com/NebulousLabs/fastrand
+# gitlab.com/NebulousLabs/go-upnp v0.0.0-20210414172302-67b91c9a5c03
+## explicit
+gitlab.com/NebulousLabs/go-upnp
+gitlab.com/NebulousLabs/go-upnp/goupnp
+gitlab.com/NebulousLabs/go-upnp/goupnp/dcps/internetgateway1
+gitlab.com/NebulousLabs/go-upnp/goupnp/httpu
+gitlab.com/NebulousLabs/go-upnp/goupnp/scpd
+gitlab.com/NebulousLabs/go-upnp/goupnp/soap
+gitlab.com/NebulousLabs/go-upnp/goupnp/ssdp
+# golang.org/x/crypto v0.0.0-20210322153248-0c34fe9e7dc2
+golang.org/x/crypto/blake2b
+# golang.org/x/net v0.0.0-20210410081132-afb366fc7cd1
+golang.org/x/net/html
+golang.org/x/net/html/atom
+golang.org/x/net/html/charset
+# golang.org/x/sys v0.0.0-20210510120138-977fb7262007
+golang.org/x/sys/cpu
+golang.org/x/sys/internal/unsafeheader
+golang.org/x/sys/unix
+# golang.org/x/text v0.3.6
+golang.org/x/text/encoding
+golang.org/x/text/encoding/charmap
+golang.org/x/text/encoding/htmlindex
+golang.org/x/text/encoding/internal
+golang.org/x/text/encoding/internal/identifier
+golang.org/x/text/encoding/japanese
+golang.org/x/text/encoding/korean
+golang.org/x/text/encoding/simplifiedchinese
+golang.org/x/text/encoding/traditionalchinese
+golang.org/x/text/encoding/unicode
+golang.org/x/text/internal/language
+golang.org/x/text/internal/language/compact
+golang.org/x/text/internal/tag
+golang.org/x/text/internal/utf8internal
+golang.org/x/text/language
+golang.org/x/text/runes
+golang.org/x/text/transform
+golang.org/x/text/unicode/norm
+# gopkg.in/ini.v1 v1.62.0
+gopkg.in/ini.v1
+# gopkg.in/yaml.v2 v2.4.0
+gopkg.in/yaml.v2
