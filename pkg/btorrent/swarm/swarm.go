@@ -83,13 +83,13 @@ func (s *Swarm) dialPeers(ctx context.Context, n int) {
 	}
 }
 
-func (s *Swarm) Init(ctx context.Context) {
+func (s *Swarm) Init(ctx context.Context, port uint16) {
 	var (
 		ticker = time.NewTicker(5 * time.Second)
 		group  = s.trackerTiers[0]
 	)
 
-	group.Announce(tracker.NewRequest(s.dialCfg.InfoHash, 6881, s.dialCfg.PeerID))
+	group.Announce(tracker.NewRequest(s.dialCfg.InfoHash, port, s.dialCfg.PeerID))
 
 	for {
 		select {

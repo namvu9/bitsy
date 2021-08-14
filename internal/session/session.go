@@ -108,7 +108,7 @@ func (s *Session) stat(statCh <-chan interface{}) {
 func (s *Session) Init() (func() error, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.startedAt = time.Now()
-	go s.swarm.Init(ctx)
+	go s.swarm.Init(ctx, s.port)
 	go s.client.Start(ctx)
 	go s.listen()
 
