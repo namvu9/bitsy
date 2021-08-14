@@ -31,14 +31,19 @@ var files []int
 
 // downloadCmd represents the download command
 var downloadCmd = &cobra.Command{
-	Use:   "download",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
+	Use:   "download <torrent>",
+	Short: "Start/Resume a torrent download",
+	Long: `This command starts downloading all of the files described by a torrent, unless a modifier flag is provided. If a download has previously been initiated for a torrent with an identical info hash, the download is resumed.
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+To download specific files of a torrent, see the --files/-f modifier.
+
+Examples:
+
+bitsy download <Magnet URL>
+bitsy download --files 0,1,2 <Magnet URL>
+bitsy download -f 0 /path/to/torrent
+bitsy download /path/to/torrent
+`,
 	Run: func(cmd *cobra.Command, args []string) {
 		t, err := btorrent.Load(args[0])
 		if err != nil {
