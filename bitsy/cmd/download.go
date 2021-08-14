@@ -126,7 +126,7 @@ bitsy download /path/to/torrent
 			BaseDir:        baseDir,
 			DownloadDir:    downloadDir,
 			MaxConnections: 50,
-			IP:             "192.168.0.4",
+			IP:             "localhost",
 			Port:           port,
 			Files:          files,
 		}, *t)
