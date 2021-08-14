@@ -37,6 +37,8 @@ var downloadCmd = &cobra.Command{
 
 To download specific files of a torrent, see the --files/-f modifier.
 
+The downloaded file(s) are written to the 'outDir' directory specified by the bitsy config file (by default located at ~/.bitsy.json).
+
 Examples:
 
 bitsy download <Magnet URL>

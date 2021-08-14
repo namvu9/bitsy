@@ -31,8 +31,6 @@ var statCmd = &cobra.Command{
 	Short: "Print a summary of the torrent along with tracker stats",
 	Long: `This command prints a summary of the torrent including its info hash, a list of files, and other metadata. It also fetches swarm data from the trackers listed by the torrent.
 
-The downloaded file(s) are written to the 'outDir' directory specified by the bitsy config file (by default located at ~/.bitsy.json).
-
 Examples:
 
 bitsy stat <Magnet URL>
