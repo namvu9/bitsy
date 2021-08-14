@@ -37,7 +37,7 @@ func BaseDir() (string, error) {
 	}
 
 	baseDir := path.Join(d, ".bitsy")
-	err = os.MkdirAll(baseDir, 0666)
+	err = os.MkdirAll(baseDir, 0777)
 	if err != nil {
 		return "", err
 	}
@@ -52,7 +52,7 @@ func DownloadDir() (string, error) {
 	}
 
 	downloadDir := path.Join(d, "Downloads")
-	err = os.MkdirAll(downloadDir, 0666)
+	err = os.MkdirAll(downloadDir, 0777)
 	if err != nil {
 		return "", err
 	}
