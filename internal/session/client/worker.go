@@ -2,7 +2,6 @@ package client
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path"
 	"sync"
@@ -208,12 +207,10 @@ func (c *worker) savePiece(index int, data []byte) error {
 		return err
 	}
 
-	n, err := file.Write(data)
+	_, err = file.Write(data)
 	if err != nil {
 		return err
 	}
-
-	log.Printf("Wrote %d bytes to %s\n", n, filePath)
 
 	return nil
 }
