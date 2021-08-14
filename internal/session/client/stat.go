@@ -12,8 +12,8 @@ type FileStat struct {
 	Ignored bool
 	//Status     ClientStat
 	Name       string
-	Size       btorrent.FileSize
-	Downloaded btorrent.FileSize
+	Size       btorrent.Size
+	Downloaded btorrent.Size
 }
 
 func (fs FileStat) String() string {
@@ -34,10 +34,10 @@ type ClientStat struct {
 	State        ClientState
 	Pieces       int
 	TotalPieces  int
-	DownloadRate btorrent.FileSize // per second
-	Downloaded   btorrent.FileSize
-	Left         btorrent.FileSize
-	Uploaded     btorrent.FileSize
+	DownloadRate btorrent.Size // per second
+	Downloaded   btorrent.Size
+	Left         btorrent.Size
+	Uploaded     btorrent.Size
 	Files        []FileStat
 	Pending      int
 
@@ -76,44 +76,40 @@ func min(a, b int) int {
 func (c *Client) Stat() ClientStat {
 	var fs []FileStat
 
-	files, err := c.torrent.Files()
-	if err == nil {
-		for i, file := range files {
-			var ignored bool
-			for _, pc := range file.Pieces {
-				pcIdx := c.torrent.GetPieceIndex(pc)
-				if pcIdx >= 0 && c.ignoredPieces.Get(pcIdx) {
-					ignored = true
-					break
-				}
+	for i, file := range c.torrent.Files() {
+		var ignored bool
+		for _, pc := range file.Pieces {
+			pcIdx := c.torrent.GetPieceIndex(pc)
+			if pcIdx >= 0 && c.ignoredPieces.Get(pcIdx) {
+				ignored = true
+				break
 			}
-			if ignored {
-				continue
-			}
-			var downloaded int
-			for _, piece := range file.Pieces {
-				if c.pieces.Get(c.torrent.GetPieceIndex(piece)) {
-					downloaded += int(c.torrent.PieceLength())
-				}
-			}
-
-
-			fs = append(fs, FileStat{
-				Index:      i,
-				Ignored:    ignored,
-				Name:       file.Name,
-				Size:       file.Length,
-				Downloaded: btorrent.FileSize(min(int(file.Length), downloaded)),
-			})
 		}
+		if ignored {
+			continue
+		}
+		var downloaded int
+		for _, piece := range file.Pieces {
+			if c.pieces.Get(c.torrent.GetPieceIndex(piece)) {
+				downloaded += int(c.torrent.PieceLength())
+			}
+		}
+
+		fs = append(fs, FileStat{
+			Index:      i,
+			Ignored:    ignored,
+			Name:       file.Name,
+			Size:       file.Length,
+			Downloaded: btorrent.Size(min(int(file.Length), downloaded)),
+		})
 	}
 
 	return ClientStat{
 		State:        c.state,
-		Uploaded:     btorrent.FileSize(c.Uploaded),
-		Downloaded:   btorrent.FileSize(c.pieces.GetSum() * int(c.torrent.PieceLength())),
+		Uploaded:     btorrent.Size(c.Uploaded),
+		Downloaded:   btorrent.Size(c.pieces.GetSum() * int(c.torrent.PieceLength())),
 		DownloadRate: c.DownloadRate,
-		Left:         btorrent.FileSize((len(c.torrent.Pieces()) - c.pieces.GetSum()) * int(c.torrent.PieceLength())),
+		Left:         btorrent.Size((len(c.torrent.Pieces()) - c.pieces.GetSum()) * int(c.torrent.PieceLength())),
 
 		Pieces:      c.pieces.GetSum(),
 		Pending:     c.Pending,

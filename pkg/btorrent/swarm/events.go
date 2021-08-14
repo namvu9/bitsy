@@ -8,8 +8,6 @@ import (
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
 )
 
-type Event interface{}
-
 type JoinEvent struct {
 	*peer.Peer
 }
@@ -34,7 +32,7 @@ type MulticastMessage struct {
 
 // the first response value is an indicator of whether the
 // swarm should propagate the event to subscribers
-func (s *Swarm) handleEvent(e Event) (bool, error) {
+func (s *Swarm) handleEvent(e interface{}) (bool, error) {
 	switch v := e.(type) {
 	case JoinEvent:
 		v.Peer.OnClose(func(p *peer.Peer) {

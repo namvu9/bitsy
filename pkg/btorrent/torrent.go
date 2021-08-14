@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
-	"fmt"
 	"io/ioutil"
-	"math"
 	"net/url"
 	"path"
 	"regexp"
@@ -53,12 +51,11 @@ func (t *Torrent) Stat() map[string]interface{} {
 	stats["trackers"] = t.AnnounceList()
 
 	var fileStats []map[string]interface{}
-	files, _ := t.Files()
-	for _, file := range files {
+	for _, file := range t.Files() {
 		fileStat := make(map[string]interface{})
 		fileStat["name"] = file.Name
 		fileStat["length"] = file.Length
-		fileStat["path"] = file.Path
+		fileStat["path"] = file.FullPath
 
 		fileStats = append(fileStats, fileStat)
 	}
@@ -89,7 +86,7 @@ func (t *Torrent) Verify(pieces Pieces) bool {
 		}
 	}
 
-	if t.Length() != FileSize(size) {
+	if t.Length() != Size(size) {
 		return false
 	}
 
@@ -122,23 +119,14 @@ func (t *Torrent) Dict() *bencode.Dictionary {
 	return t.dict
 }
 
-func (t *Torrent) Description() string {
-	info, ok := t.Info()
-	if !ok {
-		return ""
-	}
-	s, _ := info.GetString("description")
-	return s
-}
-
-func (t *Torrent) PieceLength() FileSize {
+func (t *Torrent) PieceLength() Size {
 	info, ok := t.Info()
 	if !ok {
 		return 0
 	}
 	pieceLength, ok := info.GetInteger("piece length")
 
-	return FileSize(pieceLength)
+	return Size(pieceLength)
 }
 
 type PieceHash []byte
@@ -260,19 +248,6 @@ func (t *Torrent) AnnounceList() [][]string {
 	return out
 }
 
-type File struct {
-	Name   string
-	Length FileSize
-	Path   string
-
-	// The SHA-1 hashes of the pieces that constitute the file
-	// data. Note that pieces may overlap file boundaries and
-	// may contain data from other files. They may
-	// nevertheless be useful in determining when a file has
-	// been downloaded completely.
-	Pieces [][]byte
-}
-
 // TODO: TEST
 func GroupBytes(data []byte, n int) [][]byte {
 	var out [][]byte
@@ -295,75 +270,29 @@ func GroupBytes(data []byte, n int) [][]byte {
 	return out
 }
 
-// TODO: TEST
-func getPieces(fileLength int64, pieces [][]byte, pieceLength int64) ([][]byte, bool) {
-	var out [][]byte
-	overlap := fileLength%pieceLength != 0
-
-	// Off-by-1 error?
-	nPieces := math.Ceil(float64(fileLength) / float64(pieceLength))
-
-	for i, piece := range pieces {
-		if i == int(nPieces) {
-			return out, overlap
-		}
-
-		out = append(out, piece)
-	}
-
-	return out, overlap
-}
-
-// Files returns a list of file metadata as bencoded
-// dictionaries
-func (t *Torrent) Files() ([]File, error) {
+// Files returns a list of file metadata
+func (t *Torrent) Files() []File {
 	var out []File
 
 	info, ok := t.Info()
 	if !ok {
-		return out, fmt.Errorf("info dictionary does not exist or is incorrectly encoded")
-	}
-
-	pieceLength, ok := info.GetInteger("piece length")
-	if !ok {
-		return out, fmt.Errorf("field piece length does not exist or is incorrectly encoded")
+		panic("torrent does not have an info dictionary")
 	}
 
 	pieces := t.Pieces()
 	files, ok := info.GetList("files")
+
+	// Single-file torrent
 	if !ok {
 		fileLength, _ := info.GetInteger("length")
 		name, _ := info.GetString("name")
 
-		out = append(out, File{Name: name, Length: FileSize(fileLength), Path: name, Pieces: pieces})
+		out = append(out, File{Name: name, Length: Size(fileLength), FullPath: name, Pieces: pieces})
 	}
 
+	// Multi-file torrent
 	for _, file := range files {
-		var (
-			fDict, _      = file.ToDict()
-			fileLength, _ = fDict.GetInteger("length")
-			paths, _      = fDict.GetList("path")
-			segments      []string
-		)
-
-		for _, segment := range paths {
-			s, _ := segment.ToBytes()
-			segments = append(segments, string(s))
-		}
-
-		var (
-			strPath          = path.Join(segments...)
-			name, _          = paths[len(paths)-1].ToBytes()
-			fPieces, overlap = getPieces(int64(fileLength), pieces, int64(pieceLength))
-		)
-
-		tf := File{
-			Name:   string(name),
-			Length: FileSize(fileLength),
-			Path:   strPath,
-			Pieces: fPieces,
-		}
-
+		tf, overlap := getFileData(file, *t)
 		out = append(out, tf)
 
 		if overlap {
@@ -373,60 +302,20 @@ func (t *Torrent) Files() ([]File, error) {
 		}
 	}
 
-	return out, nil
+	return out
 }
 
 // Length returns the sum total size, in bytes, of the
 // torrent files.  In the case of a single-file torrent, it
 // is equal to the size of that file.
-func (t *Torrent) Length() FileSize {
-	var sum FileSize
-	files, err := t.Files()
-	if err != nil {
-		return 0
-	}
+func (t *Torrent) Length() Size {
+	var sum Size
 
-	for _, file := range files {
-		sum += FileSize(file.Length)
+	for _, file := range t.Files() {
+		sum += Size(file.Length)
 	}
 
 	return sum
-}
-
-// FileSize is the size of the file if bytes
-type FileSize uint64
-
-// KiB returns the size of the file in Kibibytes (fs / 1024)
-func (fs FileSize) KiB() float64 {
-	return float64(fs) / 1024
-}
-
-// MiB returns the size of the file in Mebibytes (fs /
-// 1024^2)
-func (fs FileSize) MiB() float64 {
-	return float64(fs) / (1024 * 1024)
-}
-
-// GiB returns the size of the file in Gibibytes (fs /
-// 1024^3)
-func (fs FileSize) GiB() float64 {
-	return float64(fs) / (1024 * 1024 * 1024)
-}
-
-func (fs FileSize) String() string {
-	if fs < 1024 {
-		return fmt.Sprintf("%d B", fs)
-	}
-
-	if fs < 1024*1024 {
-		return fmt.Sprintf("%.2f KiB", fs.KiB())
-	}
-
-	if fs < 1024*1024*1024 {
-		return fmt.Sprintf("%.2f MiB", fs.MiB())
-	}
-
-	return fmt.Sprintf("%.2f GiB", fs.GiB())
 }
 
 // Load a torrent into memory from either a magnet link or a
@@ -470,7 +359,6 @@ func Load(location string) (*Torrent, error) {
 }
 
 func LoadMagnetURL(u *url.URL) (*Torrent, error) {
-	var op errors.Op = "torrent.loadFromMagnetLink"
 	var dict bencode.Dictionary
 
 	queries := u.Query()
@@ -479,8 +367,7 @@ func LoadMagnetURL(u *url.URL) (*Torrent, error) {
 	trs, ok := queries["tr"]
 	if !ok || len(trs) == 0 {
 		// DHT is currently not supported
-		err := errors.New("magnet link must specify at least 1 tracker")
-		return nil, errors.Wrap(err, op, errors.BadArgument)
+		return nil, errors.New("magnet link must specify at least 1 tracker")
 	}
 
 	for _, tracker := range queries["tr"] {
@@ -496,12 +383,11 @@ func LoadMagnetURL(u *url.URL) (*Torrent, error) {
 		urn      = xt[2]
 	)
 	if protocol != "btih" {
-		err := errors.New("Only BitTorrent URNs (btih) are supported")
-		return nil, errors.Wrap(err, op, errors.BadArgument)
+		return nil, errors.New("Only BitTorrent URNs (btih) are supported")
 	}
 	hash, err := hex.DecodeString(urn)
 	if err != nil {
-		return nil, errors.Wrap(err, op)
+		return nil, err
 	}
 
 	dict.SetStringKey("info-hash", bencode.Bytes(hash))
@@ -543,18 +429,8 @@ func Save(path string, t *Torrent) error {
 	return nil
 }
 
-type Errors []error
-
-func (e Errors) Error() string {
-	var sb strings.Builder
-	for _, err := range e {
-		sb.WriteString(err.Error())
-		sb.WriteString(", ")
-	}
-
-	return sb.String()
-}
-
+// LoadDir reads all files with the .torrent extension
+// located at base directory 'dir'.
 func LoadDir(dir string) ([]*Torrent, error) {
 	var out []*Torrent
 	var errs []error
@@ -601,4 +477,3 @@ func New() *Torrent {
 		&bencode.Dictionary{},
 	}
 }
-

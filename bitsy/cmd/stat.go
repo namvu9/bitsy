@@ -92,9 +92,9 @@ to quickly create a Cobra application.`,
 		fmt.Printf("Info Hash: %s\n", t.HexHash())
 		fmt.Printf("Total size: %s\n", t.Length())
 		fmt.Println("Files:")
-		files, _ := t.Files()
-		for _, file := range files {
-			fmt.Printf("  %s %s\n", file.Path, file.Length)
+
+		for _, file := range t.Files() {
+			fmt.Printf("  %s %s\n", file.FullPath, file.Length)
 		}
 		fmt.Printf("Trackers:\n")
 		for _, tracker := range t.AnnounceList()[0] {

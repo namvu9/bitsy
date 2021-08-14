@@ -17,4 +17,3 @@ func flatten(data [][]byte) []byte {
 
 	return out
 }
-

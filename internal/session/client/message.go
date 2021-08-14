@@ -22,7 +22,6 @@ func (c *Client) handlePieceMessage(msg peer.PieceMessage, workers map[int]*work
 		return false, fmt.Errorf("%d: unknown piece", msg.Index)
 	}
 
-	fmt.Println("BEFORE COMPLETE CHECK")
 	if w.isComplete() {
 		delete(workers, int(w.index))
 		c.pieces.Set(int(w.index))

@@ -15,6 +15,7 @@ import (
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
 	"github.com/namvu9/bitsy/pkg/btorrent/swarm"
+	"github.com/namvu9/bitsy/pkg/ch"
 )
 
 type ClientState int
@@ -59,7 +60,8 @@ type Client struct {
 
 	// StateCh emits an event whenever the state of the client
 	// changes
-	StateCh chan swarm.Event
+	StateCh chan interface{}
+	emitCh  chan interface{}
 
 	// SwarmCh
 	pieces        bits.BitField
@@ -69,14 +71,14 @@ type Client struct {
 
 	// Out
 	doneCh  chan struct{}
-	SwarmCh chan swarm.Event
-	MsgOut  chan swarm.Event
+	SwarmCh chan interface{}
+	MsgOut  chan interface{}
 
 	MsgIn  chan messageReceived
 	DataIn chan peer.PieceMessage
 
 	Pending      int
-	DownloadRate btorrent.FileSize
+	DownloadRate btorrent.Size
 	Uploaded     int
 }
 
@@ -93,8 +95,7 @@ func (c *Client) Start(ctx context.Context) error {
 		return err
 	}
 
-	files, _ := c.torrent.Files()
-	for _, file := range files {
+	for _, file := range c.torrent.Files() {
 		filePath := path.Join(c.outDir, c.torrent.Name(), file.Name)
 		if _, err := os.Stat(filePath); err == nil {
 			c.filesWritten[file.Name] = true
@@ -102,13 +103,12 @@ func (c *Client) Start(ctx context.Context) error {
 	}
 	c.assembleTorrent(path.Join(c.outDir, c.torrent.Name()))
 
-	c.emit(StateChange{To: STARTED})
-
-	// Listen for messages
+	ch.PipeFn(ctx, c.handleEvent, c.emitCh, c.StateCh)
 	go c.listen()
 
 	if !c.done() {
 		go c.download()
+		c.emit(StateChange{To: STARTED})
 	} else {
 		c.emit(StateChange{To: SEEDING})
 	}
@@ -134,7 +134,7 @@ func (c *Client) nextNPieces(n int, exclude map[int]*worker) []int {
 func (c *Client) download() {
 	var (
 		workers = make(map[int]*worker)
-		ticker  = time.NewTicker(time.Second)
+		ticker  = time.NewTicker(2 * time.Second)
 	)
 
 	c.downloadN(5, workers)
@@ -160,7 +160,7 @@ func (c *Client) download() {
 			if done {
 				go c.emit(DownloadCompleteEvent{
 					Index:        int(msg.Index),
-					DownloadRate: btorrent.FileSize(downloadRate),
+					DownloadRate: btorrent.Size(downloadRate),
 					Pending:      len(workers),
 				})
 			}
@@ -172,18 +172,19 @@ func (c *Client) download() {
 				return
 			}
 
-			c.downloadN(1, workers)
+			if len(workers) < 10 {
+				c.downloadN(1, workers)
+			}
 		// Finished downloading piece
 		case <-ticker.C:
 			go c.unchoke()
 			go c.choke()
 
-			rate := float64(batch)
-			downloadRate = rate
+			downloadRate = float64(batch) / 2.0
 
 			c.emit(DownloadCompleteEvent{
 				Index:        int(-1),
-				DownloadRate: btorrent.FileSize(downloadRate),
+				DownloadRate: btorrent.Size(downloadRate),
 				Pending:      len(workers),
 			})
 			batch = 0
@@ -196,7 +197,7 @@ func (c *Client) download() {
 				}
 			}
 
-			if idleCount > 0 {
+			if idleCount > 3 {
 				go c.downloadN(1, workers)
 			}
 		}
@@ -204,8 +205,7 @@ func (c *Client) download() {
 }
 
 func (c *Client) anyFileDone() bool {
-	files, _ := c.torrent.Files()
-	for i := range files {
+	for i := range c.torrent.Files() {
 		if c.fileDone(i) {
 			return true
 		}
@@ -215,8 +215,7 @@ func (c *Client) anyFileDone() bool {
 }
 
 func (c *Client) fileDone(idx int) bool {
-	files, _ := c.torrent.Files()
-	file := files[idx]
+	file := c.torrent.Files()[idx]
 
 	for _, piece := range file.Pieces {
 		pcIdx := c.torrent.GetPieceIndex(piece)
@@ -293,7 +292,7 @@ func (c *Client) listen() {
 			switch v := msg.(type) {
 			case swarm.JoinEvent:
 				p := v.Peer
-				p.Send(peer.BitFieldMessage{BitField: c.pieces})
+				go p.Send(peer.BitFieldMessage{BitField: c.pieces})
 				c.subscribe(p)
 			}
 		case msg := <-c.MsgIn:
@@ -314,11 +313,11 @@ type DownloadEvent struct {
 
 type DownloadCompleteEvent struct {
 	Index        int
-	DownloadRate btorrent.FileSize
+	DownloadRate btorrent.Size
 	Pending      int
 }
 
-func (c *Client) emit(e ClientEvent) {
+func (c *Client) handleEvent(e interface{}) interface{} {
 	switch v := e.(type) {
 	case StateChange:
 		c.state = v.To
@@ -328,9 +327,12 @@ func (c *Client) emit(e ClientEvent) {
 	case DownloadEvent:
 		c.Pending = v.Pending
 	}
-	go func(stat ClientStat) {
-		c.StateCh <- stat
-	}(c.Stat())
+
+	return c.Stat()
+}
+
+func (c *Client) emit(e ClientEvent) {
+	c.emitCh <- e
 }
 
 // downloadPiece spawns a worker that manages requesting
@@ -411,8 +413,6 @@ func (c *Client) verifyPieces() error {
 		}
 	}
 
-	fmt.Printf("Verified %d pieces (%d)\n", c.pieces.GetSum(), len(c.torrent.Pieces()))
-
 	return nil
 }
 
@@ -434,8 +434,10 @@ type Option func(*Client)
 
 func WithFiles(fileIdx ...int) Option {
 	return func(c *Client) {
-		bf := bits.Ones(len(c.torrent.Pieces()))
-		files, _ := c.torrent.Files()
+		var (
+			bf    = bits.Ones(len(c.torrent.Pieces()))
+			files = c.torrent.Files()
+		)
 
 		for _, i := range fileIdx {
 			if i >= len(files) {
@@ -450,8 +452,6 @@ func WithFiles(fileIdx ...int) Option {
 			}
 		}
 
-		fmt.Printf("Ignored: %+v\n", bf)
-
 		c.ignoredPieces = bf
 	}
 }
@@ -462,11 +462,12 @@ func New(t btorrent.Torrent, baseDir, outDir string, options ...Option) *Client 
 		baseDir:       baseDir,
 		outDir:        outDir,
 		state:         STOPPED,
-		StateCh:       make(chan swarm.Event),
+		StateCh:       make(chan interface{}),
+		emitCh:        make(chan interface{}, 32),
 		MsgIn:         make(chan messageReceived, 32),
 		DataIn:        make(chan peer.PieceMessage, 32),
-		MsgOut:        make(chan swarm.Event, 32),
-		SwarmCh:       make(chan swarm.Event, 32),
+		MsgOut:        make(chan interface{}, 32),
+		SwarmCh:       make(chan interface{}, 32),
 		filesWritten:  make(map[string]bool),
 		torrent:       t,
 		ignoredPieces: bits.NewBitField(nPieces),

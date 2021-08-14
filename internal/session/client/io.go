@@ -14,13 +14,8 @@ func (c *Client) assembleTorrent(dstDir string) error {
 		return err
 	}
 
-	files, err := t.Files()
-	if err != nil {
-		return err
-	}
-
 	offset := 0
-	for i, file := range files {
+	for i, file := range c.torrent.Files() {
 		if c.filesWritten[file.Name] || !c.fileDone(i) {
 			offset += int(file.Length)
 			continue

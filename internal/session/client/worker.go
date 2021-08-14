@@ -27,7 +27,7 @@ type worker struct {
 
 	timeout time.Duration
 
-	out  chan swarm.Event
+	out  chan interface{}
 	stop chan struct{}
 	in   chan peer.PieceMessage
 
@@ -165,10 +165,8 @@ func (w *worker) requestSubPiece(index uint32, offset uint32) error {
 			return !p.Blocking && p.HasPiece(int(index))
 		},
 
-		Limit: 10,
+		Limit: 2,
 		Handler: func(peers []*peer.Peer) {
-			fmt.Println("REQUESTING SUBPIECE", msg.Index, msg.Offset, len(peers))
-
 			for _, p := range peers {
 				go p.Send(msg)
 			}
