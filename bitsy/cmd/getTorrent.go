@@ -50,7 +50,10 @@ func withTimeout(ctx context.Context, timeout time.Duration) (context.Context, f
 var getTorrentCmd = &cobra.Command{
 	Use:   "getTorrent <magnet url>",
 	Short: "Convert a magnet url to a torrent file",
-	Long:  ``,
+	Long:  `Example:
+
+bitsy getTorrent <magnetURL> > out.torrent
+`,
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx, cancel := withTimeout(context.Background(), 60*time.Second)
