@@ -2,10 +2,12 @@ package tracker
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"net"
 	"net/url"
 	"sync"
+	"time"
 
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/rs/zerolog/log"
@@ -23,7 +25,7 @@ type Tracker interface {
 	Announce(Request) (*Response, error)
 	ShouldAnnounce() bool
 	Err() error
-	Stat() map[string]interface{}
+	Stat() TrackerStat
 }
 
 type TrackerGroup struct {
@@ -32,65 +34,116 @@ type TrackerGroup struct {
 	outCh chan Response
 	inCh  chan map[string]interface{}
 
-	trackers [][]Tracker
+	trackers []Tracker
 	peerID   [20]byte
 
 	Port uint16
 }
 
-func (tg *TrackerGroup) Stat() []interface{} {
-	var trackers []interface{}
-	for _, tier := range tg.trackers {
-		for _, tracker := range tier {
-			trackers = append(trackers, tracker.Stat())
-		}
-	}
-
-	return trackers
+type TrackerStat struct {
+	Url          *url.URL
+	Peers        peerList
+	Seeders      int
+	Leechers     int
+	NextAnnounce time.Time
+	Err          error
 }
 
-func (tg *TrackerGroup) Announce(req Request) []PeerInfo {
-	var out []PeerInfo
+type peerList []net.Addr
 
-	var nSuccess int
+func (tg *TrackerGroup) Stat() []TrackerStat {
+	var out []TrackerStat
+	for _, tracker := range tg.trackers {
+		out = append(out, tracker.Stat())
+	}
+
+	return out
+}
+
+func (tg *TrackerGroup) Len() int {
+	return len(tg.trackers)
+}
+
+func (tg *TrackerGroup) Scrape() []TrackerStat {
+	var out []TrackerStat
+	return out
+}
+
+func AnnounceS(ctx context.Context, urls []string, req Request) chan TrackerStat {
+	return NewGroup(urls).AnnounceS(ctx, req)
+}
+
+// AnnounceS is like Announce, but returns a stream instead
+// of a slice
+func (tg *TrackerGroup) AnnounceS(ctx context.Context, req Request) chan TrackerStat {
+	out := make(chan TrackerStat, len(tg.trackers))
+
+	go func() {
+		var wg sync.WaitGroup
+
+		for _, tracker := range tg.trackers {
+			wg.Add(1)
+			go func(tracker Tracker, wg *sync.WaitGroup) {
+				defer wg.Done()
+
+				if !tracker.ShouldAnnounce() {
+					return
+				}
+
+				_, err := tracker.Announce(req)
+				if err != nil {
+					return
+				}
+
+				out <- tracker.Stat()
+			}(tracker, &wg)
+		}
+
+		wg.Wait()
+		close(out)
+	}()
+
+	return out
+}
+
+func (tg *TrackerGroup) Announce(req Request) map[string]PeerInfo {
+	out := make(map[string]PeerInfo)
+
 	var wg sync.WaitGroup
 	var resCh = make(chan *Response, 30)
 
-	for _, tier := range tg.trackers {
-		for _, tracker := range tier {
-			wg.Add(1)
-			go func(tracker Tracker) {
-				if !tracker.ShouldAnnounce() {
-					wg.Done()
-					return
-				}
-
-				res, err := tracker.Announce(req)
-				if err != nil {
-					log.Err(err).Msg("Announce failed")
-					wg.Done()
-					return
-				}
-
-				select {
-				case resCh <- res:
-				default:
-				}
+	for _, tracker := range tg.trackers {
+		wg.Add(1)
+		go func(tracker Tracker) {
+			if !tracker.ShouldAnnounce() {
 				wg.Done()
-			}(tracker)
-		}
+				return
+			}
+
+			res, err := tracker.Announce(req)
+			if err != nil {
+				log.Err(err).Msg("Announce failed")
+				wg.Done()
+				return
+			}
+
+			select {
+			case resCh <- res:
+			default:
+			}
+			wg.Done()
+		}(tracker)
 	}
 
 	wg.Wait()
 	close(resCh)
-	
-	for res := range resCh {
-		out = append(out, res.Peers...)
-		nSuccess++
-	}
 
-	if nSuccess >= 5 {
-		return out
+	var count int
+	for res := range resCh {
+		for _, peer := range res.Peers {
+			count++
+			out[string(peer.IP.To16())] = peer
+		}
 	}
 
 	log.Printf("Discovered %d peers\n", len(out))
@@ -159,33 +212,19 @@ func NewRequest(hash [20]byte, port uint16, peerID [20]byte) Request {
 	}
 }
 
-func New(t btorrent.Torrent, port uint16, peerID [20]byte) *TrackerGroup {
-	var trackerTiers [][]Tracker
+func NewGroup(addrs []string) *TrackerGroup {
+	var trackers []Tracker
 
-	for _, tier := range t.AnnounceList() {
-		var trackers []Tracker
-		for _, trackerURL := range tier {
-			url, err := url.Parse(trackerURL)
-			if err != nil {
-				continue
-			}
-
-			if url.Scheme == "udp" {
-				trackers = append(trackers, &UDPTracker{
-					URL: url,
-				})
-			}
+	for _, addr := range addrs {
+		url, err := url.Parse(addr)
+		if err != nil {
+			continue
 		}
 
-		if len(trackers) > 0 {
-			trackerTiers = append(trackerTiers, trackers)
+		if url.Scheme == "udp" {
+			trackers = append(trackers, NewUDPTracker(url))
 		}
 	}
 
-	return &TrackerGroup{
-		Torrent:  t,
-		trackers: trackerTiers,
-		Port:     port,
-		peerID:   peerID,
-	}
+	return &TrackerGroup{trackers: trackers}
 }

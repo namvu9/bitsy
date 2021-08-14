@@ -101,14 +101,39 @@ func (b BitField) Set(index int) error {
 	return nil
 }
 
-func (b BitField) Unset(index int) {}
+func (b BitField) Unset(index int) error {
+	var (
+		offset     = index / 8
+		localIndex = index % 8
+		bitMask    = byte(128 >> localIndex)
+	)
+
+	// TODO: Test this case
+	if offset >= len(b) {
+		return fmt.Errorf("Out of bounds")
+	}
+
+	// Unset bit
+	b[offset] &^= bitMask
+	return nil
+}
 
 // Len returns the number of bits in the bitfield
 func (b BitField) Len() int {
 	return len(b) * 8
 }
 
-func NewBitField(bits int) []byte {
+// Ones returns an n-length bitfields with all bits set to 1
+func Ones(n int) BitField {
+	bf := NewBitField(n)
+	for i := 0; i < n; i++ {
+		bf.Set(i)
+	}
+
+	return bf
+}
+
+func NewBitField(bits int) BitField {
 	if bits%8 == 0 {
 		return make([]byte, bits/8)
 	}

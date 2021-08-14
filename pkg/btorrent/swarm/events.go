@@ -1,12 +1,12 @@
 package swarm
 
 import (
+	"math/rand"
+	"sort"
 	"time"
 
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
 )
-
-type Event interface{}
 
 type JoinEvent struct {
 	*peer.Peer
@@ -14,59 +14,6 @@ type JoinEvent struct {
 
 type LeaveEvent struct {
 	*peer.Peer
-}
-
-type InterestedEvent struct {
-	*peer.Peer
-	peer.Message
-}
-
-type InterestingEvent struct {
-	*peer.Peer
-	peer.Message
-}
-
-// BlockedEvent represents the peer choking the client
-type BlockedEvent struct {
-	By *peer.Peer
-	peer.Message
-}
-
-// ChokeEvent represents the client choking the given peer
-type ChokeEvent struct {
-	*peer.Peer
-	peer.Message
-}
-
-type UnchokeEvent struct {
-	*peer.Peer
-	peer.Message
-}
-
-type DataReceivedEvent struct {
-	peer.PieceMessage
-	Sender *peer.Peer
-}
-
-type DataSentEvent struct {
-	peer.PieceMessage
-	Receiver *peer.Peer
-}
-
-type DataRequestEvent struct {
-	peer.RequestMessage
-	Sender *peer.Peer
-}
-
-type BitFieldEvent struct {
-	peer.BitFieldMessage
-	Sender *peer.Peer
-}
-
-type DownloadCompleteEvent struct {
-	time.Duration
-	Index uint32
-	Data  []byte
 }
 
 type MulticastMessage struct {
@@ -85,34 +32,62 @@ type MulticastMessage struct {
 
 // the first response value is an indicator of whether the
 // swarm should propagate the event to subscribers
-func (s *Swarm) handleEvent(e Event) (bool, error) {
+func (s *Swarm) handleEvent(e interface{}) (bool, error) {
 	switch v := e.(type) {
 	case JoinEvent:
+		v.Peer.OnClose(func(p *peer.Peer) {
+			s.EventCh <- LeaveEvent{Peer: p}
+		})
 		return s.addPeer(v.Peer)
 	case LeaveEvent:
 		return s.removePeer(v.Peer)
 	case MulticastMessage:
-		return s.handleBroadcastRequest(v)
+		return s.handleMulticastMessage(v)
 	}
 
 	return true, nil
 }
 
-func (s *Swarm) handleBroadcastRequest(req MulticastMessage) (bool, error) {
+func (s *Swarm) handleMulticastMessage(req MulticastMessage) (bool, error) {
 	go func() {
+		var res []*peer.Peer
 		count := 0
-		for i, peer := range s.peers {
-			if req.Limit > 0 && i == req.Limit {
+
+		var cpy []*peer.Peer
+		for _, p := range s.peers {
+			cpy = append(cpy, p)
+		}
+
+		if req.OrderBy != nil {
+			sort.SliceStable(cpy, func(i, j int) bool {
+				return req.OrderBy(cpy[i], cpy[j]) < 0
+			})
+
+		} else {
+			rand.Seed(time.Now().UnixNano())
+			rand.Shuffle(len(cpy), func(i, j int) {
+				cpy[i], cpy[j] = cpy[j], cpy[i]
+			})
+		}
+
+		for _, peer := range cpy {
+			n := rand.Int31n(100)
+			if n < 25 {
+				continue
+			}
+			if req.Limit > 0 && count == req.Limit {
 				break
 			}
 
 			if req.Filter != nil && !req.Filter(peer) {
-				break
+				continue
 			}
 
+			res = append(res, peer)
 			count++
-			//go peer.Send(req.Message)
 		}
+
+		req.Handler(res)
 	}()
 
 	return false, nil

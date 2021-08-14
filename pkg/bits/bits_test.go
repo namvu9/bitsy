@@ -39,7 +39,7 @@ func TestParseBitField(t *testing.T) {
 	}
 }
 
-func TestIndexSet(t *testing.T) {
+func TestIndexIsSet(t *testing.T) {
 	for i, test := range []struct {
 		bitField bits.BitField
 		index    int
@@ -131,4 +131,22 @@ func TestNewBitField(t *testing.T) {
 			t.Errorf("%d: Want %d got %d", i, test.want, len(bf))
 		}
 	}
+}
+
+func TestUnsetBit(t *testing.T) {
+	bf := bits.Ones(8)
+
+	if bf.GetSum() != 8 {
+		t.Errorf("Want %d got %d", 8, bf.GetSum())
+	}
+
+	bf.Unset(3)
+	if bf.GetSum() != 7 {
+		t.Errorf("Want %d got %d", 7, bf.GetSum())
+	}
+
+	if bf.Get(3) {
+		t.Errorf("Bit 3 should be unset")
+	}
+
 }
