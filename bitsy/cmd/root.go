@@ -31,7 +31,7 @@ var verbose bool
 var rootCmd = &cobra.Command{
 	Use:   "bitsy",
 	Short: "Bitsy - A BitTorrent client for the terminal",
-	Long: `WIP: Bitsy is a simple BitTorrent client for the commandline.
+	Long: `Bitsy is a simple BitTorrent client for the commandline.
 
 By default, temporary files are stored in ~/.bitsy/ and downloaded files are written to ~/Downloads.
 `,

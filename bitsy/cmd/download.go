@@ -89,7 +89,7 @@ bitsy download /path/to/torrent
 		fmt.Printf("Forwarding port... ")
 
 		// TODO: use port from config
-		port, err := session.ForwardPorts([]uint16{6881})
+		port, err := session.ForwardPorts(6881, 6889)
 		if err != nil {
 			fmt.Println("Failed to find open port", err)
 			return

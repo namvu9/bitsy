@@ -190,7 +190,7 @@ func (c *Client) download() {
 			if len(workers) < 30 {
 				c.downloadN(1, workers)
 			}
-		// Finished downloading piece
+
 		case <-ticker.C:
 			go c.unchoke()
 			go c.choke()

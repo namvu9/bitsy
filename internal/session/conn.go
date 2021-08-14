@@ -119,7 +119,7 @@ type upnpRes struct {
 	port       int
 }
 
-func ForwardPorts(ports []uint16) (uint16, error) {
+func ForwardPorts(from, to uint16) (uint16, error) {
 	var op errors.Op = "client.forwardPorts"
 
 	// Discover UPnP-supporting routers
@@ -129,7 +129,7 @@ func ForwardPorts(ports []uint16) (uint16, error) {
 	}
 
 	// forward a port
-	for _, port := range ports {
+	for port := from; port <= to; port++ {
 		err = d.Forward(port, "Bitsy BitTorrent client")
 		if err != nil {
 			continue
