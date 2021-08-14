@@ -1,4 +1,4 @@
-package session
+package client
 
 import (
 	"fmt"
@@ -13,16 +13,12 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// LenSubpiece is the maximum length to use when requesting
+// lenSubpiece is the maximum length to use when requesting
 // a subpiece
-const LenSubpiece = 16 * 1024
+const lenSubpiece = 16 * 1024
 
-// Worker represents an active request for a piece
-// Make a map of channels where the receiver is a
-// goroutine that manages pending pieces
-// The goroutine returns whenever the channel is closed or
-// it completes
-type Worker struct {
+// worker represents an active request for a piece
+type worker struct {
 	Started      time.Time
 	LastModified time.Time
 
@@ -46,38 +42,51 @@ type Worker struct {
 	lock        sync.Mutex
 }
 
-func (w *Worker) Idle() bool {
+func (w *worker) idle() bool {
 	return time.Now().Sub(w.LastModified) > 5*time.Second
 }
 
-func (w *Worker) Restart() {
-	w.LastModified = time.Now()
-	w.RequestPiece(uint32(w.index))
+func (w *worker) dead() bool {
+	return time.Now().Sub(w.LastModified) > 15*time.Second
 }
 
-func (w *Worker) Progress() float32 {
+func (w *worker) restart() {
+	w.LastModified = time.Now()
+	go w.requestPiece(uint32(w.index))
+}
+
+func (w *worker) progress() float32 {
 	w.lock.Lock()
 	defer w.lock.Unlock()
-	return float32(len(w.subpieces)*LenSubpiece) / float32(w.pieceLength)
+	return float32(len(w.subpieces)*lenSubpiece) / float32(w.pieceLength)
 }
 
-func (w *Worker) Run() {
+func (w *worker) run() {
 	go func() {
-		w.RequestPiece(w.index)
+		w.requestPiece(w.index)
 		for {
 			select {
-			case msg := <-w.in:
+			case <-w.stop:
+				return
+			case msg, ok := <-w.in:
+				if !ok {
+					return
+				}
+				// ignore subpieces we already have
+				if _, ok := w.subpieces[msg.Offset]; ok {
+					continue
+				}
 				w.LastModified = time.Now()
 				w.lock.Lock()
 				w.subpieces[msg.Offset] = msg.Piece
 				w.lock.Unlock()
 
-				if w.IsComplete() {
-					err := w.savePiece(int(w.index), w.Bytes())
+				if w.isComplete() {
+					err := w.savePiece(int(w.index), w.bytes())
 					if err != nil {
 						fmt.Println("FAILED TO SAVE", err)
 					}
-					
+
 					return
 				}
 			}
@@ -86,7 +95,7 @@ func (w *Worker) Run() {
 	}()
 }
 
-func (w *Worker) IsComplete() bool {
+func (w *worker) isComplete() bool {
 	w.lock.Lock()
 	defer w.lock.Unlock()
 	var sum int
@@ -97,7 +106,7 @@ func (w *Worker) IsComplete() bool {
 	return uint64(sum) == w.pieceLength
 }
 
-func (w *Worker) Bytes() []byte {
+func (w *worker) bytes() []byte {
 	w.lock.Lock()
 	defer w.lock.Unlock()
 	buf := make([]byte, w.pieceLength)
@@ -109,7 +118,7 @@ func (w *Worker) Bytes() []byte {
 	return buf
 }
 
-func (w *Worker) RequestPiece(index uint32) error {
+func (w *worker) requestPiece(index uint32) error {
 	w.lock.Lock()
 	defer w.lock.Unlock()
 
@@ -130,7 +139,7 @@ func (w *Worker) RequestPiece(index uint32) error {
 	return nil
 }
 
-func (w *Worker) requestSubPiece(index uint32, offset uint32) error {
+func (w *worker) requestSubPiece(index uint32, offset uint32) error {
 	var (
 		remaining      = uint32(w.pieceLength) - offset
 		subPieceLength = uint32(16 * 1024)
@@ -153,12 +162,13 @@ func (w *Worker) requestSubPiece(index uint32, offset uint32) error {
 			return int(p1.Uploaded) - int(p2.Uploaded)
 		},
 		Filter: func(p *peer.Peer) bool {
-			return !p.Blocking && p.HasPiece(int(index)) && !p.IsServing(index, offset)
-			//return p.HasPiece(int(index))
+			return !p.Blocking && p.HasPiece(int(index))
 		},
 
-		Limit: 4,
+		Limit: 10,
 		Handler: func(peers []*peer.Peer) {
+			fmt.Println("REQUESTING SUBPIECE", msg.Index, msg.Offset, len(peers))
+
 			for _, p := range peers {
 				go p.Send(msg)
 			}
@@ -178,11 +188,10 @@ func (w *Worker) requestSubPiece(index uint32, offset uint32) error {
 		},
 	}
 
-
 	return nil
 }
 
-func (c *Worker) savePiece(index int, data []byte) error {
+func (c *worker) savePiece(index int, data []byte) error {
 	s := c.torrent
 	ok := s.VerifyPiece(index, data)
 	if !ok {

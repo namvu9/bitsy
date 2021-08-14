@@ -10,4 +10,7 @@ type Config struct {
 	// one that is successfully forwarded will be used for
 	// incoming connections
 	Port uint16
+
+	// TODO: MOVE THIS
+	Files []int
 }

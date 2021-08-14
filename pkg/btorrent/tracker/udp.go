@@ -97,7 +97,7 @@ func (tr *UDPTracker) Err() error {
 
 func (tr *UDPTracker) ShouldAnnounce() bool {
 	nextAnnounce := tr.lastAnnounce.Add(tr.interval)
-	if tr.failures > 8 || time.Now().Before(nextAnnounce) {
+	if time.Now().Before(nextAnnounce) {
 		return false
 	}
 

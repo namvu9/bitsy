@@ -172,14 +172,13 @@ func (p *Peer) Listen(ctx context.Context) {
 		case UnchokeMessage:
 			p.Blocking = false
 		case InterestedMessage:
-			fmt.Printf("%s is interested\n", p.ID)
 			p.Interested = true
+			p.Send(UnchokeMessage{})
 		case NotInterestedMessage:
 			p.Interested = false
 		case BitFieldMessage:
 			p.Pieces = v.BitField
 		case RequestMessage:
-			fmt.Println("<<<<< ASKED FOR PIECE >>>>>")
 		case *ExtHandshakeMsg:
 			err := p.handleExtHandshakeMsg(v)
 			if err != nil {

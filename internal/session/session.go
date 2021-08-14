@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/namvu9/bitsy/internal/errors"
+	"github.com/namvu9/bitsy/internal/session/client"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
 	"github.com/namvu9/bitsy/pkg/btorrent/swarm"
@@ -45,7 +46,7 @@ type Session struct {
 	torrent  btorrent.Torrent
 	trackers []*tracker.TrackerGroup
 	swarm    *swarm.Swarm
-	client   *Client
+	client   *client.Client
 
 	// Config
 	peerID      [20]byte
@@ -59,80 +60,64 @@ type Session struct {
 
 type Event interface{}
 
-func pipe(ctx context.Context, in, out chan swarm.Event) {
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case ev := <-in:
-				out <- ev
-			}
-		}
-	}()
-}
-
 func clear() {
-	cmd := exec.Command("clear") //Linux example, its tested
+	cmd := exec.Command("clear")
 	cmd.Stdout = os.Stdout
 	cmd.Run()
 }
 
-func Spread(ctx context.Context, in chan swarm.Event, out ...chan swarm.Event) {
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case ev := <-in:
-				for _, outCh := range out {
-					select {
-					case outCh <- ev:
-					default:
-					}
-				}
-			}
-		}
-	}()
-}
+// Torrent
+// Swarm
+// Client
 
 func (s *Session) Init() (func() error, error) {
+	ctx, cancel := context.WithCancel(context.Background())
 	s.startedAt = time.Now()
-	go s.client.Start()
+	go s.swarm.Init()
+	go s.client.Start(ctx)
 	go s.listen()
 
 	statCh := make(chan swarm.Event, 32)
 
+	// TODO: Session should "own" a stats collector object
 	go func() {
 		start := time.Now()
 		for {
-			msg := <-statCh
 			var sb strings.Builder
+			stat := s.client.Stat()
 
 			fmt.Fprintf(&sb, "--------\n%s\n-------\n", s.torrent.Name())
 			fmt.Fprintf(&sb, "Session Length: %s\n", time.Now().Sub(start))
 			fmt.Fprintf(&sb, "Info Hash: %s\n", s.torrent.HexHash())
-
-			if v, ok := msg.(ClientStat); ok {
-				fmt.Fprint(&sb, v)
-			} else {
-				fmt.Fprint(&sb, s.client.Stat())
+			select {
+			case msg := <-statCh:
+				if v, ok := msg.(client.ClientStat); ok {
+					stat = v
+					fmt.Fprint(&sb, stat)
+				} else {
+					fmt.Fprint(&sb, stat)
+				}
+			default:
+				fmt.Fprint(&sb, stat)
 			}
+
 			fmt.Fprintf(&sb, "Peers: %d\n", s.swarm.Stat().Peers)
 			fmt.Fprint(&sb, "--------")
-			clear()
+			//clear()
 			fmt.Println(sb.String())
+			time.Sleep(5*time.Second)
 		}
 	}()
 
-	ctx := context.Background()
-
-	Spread(ctx, s.swarm.OutCh, s.client.swarmCh, statCh)
+	Spread(ctx, s.swarm.OutCh, s.client.SwarmCh, statCh)
 	Spread(ctx, s.client.StateCh, statCh)
 
-	pipe(ctx, s.client.msgOut, s.swarm.EventCh)
+	Pipe(ctx, s.client.MsgOut, s.swarm.EventCh)
 
-	return func() error { return nil }, nil
+	return func() error {
+		cancel()
+		return nil
+	}, nil
 }
 
 func (s *Session) listen() error {
@@ -201,7 +186,11 @@ func New(cfg Config, t btorrent.Torrent) *Session {
 	}
 	msgIn := make(chan swarm.Event, 32)
 	swarm := swarm.New(t, msgIn, trackers, dialCfg)
-	go swarm.Init()
+
+	opts := []client.Option{}
+	if len(cfg.Files) > 0 {
+		opts = append(opts, client.WithFiles(cfg.Files...))
+	}
 
 	c := &Session{
 		baseDir:     cfg.BaseDir,
@@ -213,15 +202,10 @@ func New(cfg Config, t btorrent.Torrent) *Session {
 		torrent:  t,
 		trackers: trackers,
 
-		ip:    cfg.IP,
-		msgIn: msgIn,
-		client: NewClient(t, ClientConfig{
-			InitState: STOPPED,
-			BaseDir:   cfg.DownloadDir,
-			OutDir:    cfg.DownloadDir,
-			MaxPeers:  50,
-		}),
-		swarm: &swarm,
+		ip:     cfg.IP,
+		msgIn:  msgIn,
+		client: client.New(t, cfg.BaseDir, cfg.DownloadDir, opts...),
+		swarm:  &swarm,
 	}
 
 	return c

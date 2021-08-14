@@ -24,7 +24,10 @@ import (
 	"github.com/namvu9/bitsy/internal/session"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
+
+var files []int
 
 // downloadCmd represents the download command
 var downloadCmd = &cobra.Command{
@@ -43,6 +46,7 @@ to quickly create a Cobra application.`,
 			os.Exit(1)
 		}
 
+
 		fmt.Printf("--------\n%s\n-------\n", t.Name())
 		fmt.Printf("%s\n", t.HexHash())
 		fmt.Printf("Forwarding port... ")
@@ -58,7 +62,6 @@ to quickly create a Cobra application.`,
 			ctx, cancel := withTimeout(context.Background(), 10*time.Second)
 			t2, err := getMeta(ctx, t, port)
 			if err != nil {
-				//fmt.Println("Failed to fetch metadata", err)
 				cancel()
 				return
 			}
@@ -69,10 +72,12 @@ to quickly create a Cobra application.`,
 		fmt.Printf("Initiating session\n")
 
 		s := session.New(session.Config{
-			DownloadDir:    "./downloads",
+			BaseDir:        viper.GetString("baseDir"),
+			DownloadDir:    viper.GetString("downloadDir"),
 			MaxConnections: 50,
 			IP:             "192.168.0.4",
 			Port:           port,
+			Files:          files,
 		}, *t)
 
 		s.Init()
@@ -84,6 +89,8 @@ to quickly create a Cobra application.`,
 
 func init() {
 	rootCmd.AddCommand(downloadCmd)
+
+	downloadCmd.Flags().IntSliceVarP(&files, "files", "f", []int{}, "Download specific files")
 
 	// Here you will define your flags and configuration settings.
 

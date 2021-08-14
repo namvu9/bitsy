@@ -86,7 +86,7 @@ to quickly create a Cobra application.`,
 		log("Done (took %.2fs)\n\n", time.Since(start).Seconds())
 
 		fmt.Printf("-------\n%s\n-------\n", t.Name())
-		fmt.Printf("Piece length: %s\n", t.PieceLength())
+		fmt.Printf("Piece length: %d\n", t.PieceLength())
 		fmt.Printf("Seeders: %d\n", seeders/count)
 		fmt.Printf("Leechers: %d\n", leechers/count)
 		fmt.Printf("Info Hash: %s\n", t.HexHash())

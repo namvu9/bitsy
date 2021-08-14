@@ -109,7 +109,10 @@ func (t *Torrent) VerifyPiece(i int, piece []byte) bool {
 }
 
 func (t *Torrent) Bytes() []byte {
-	data, _ := bencode.Marshal(t.Dict())
+	data, err := bencode.Marshal(t.Dict())
+	if err != nil {
+		return []byte{}
+	}
 
 	return data
 }
