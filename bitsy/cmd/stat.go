@@ -27,14 +27,16 @@ import (
 
 // statCmd represents the stat command
 var statCmd = &cobra.Command{
-	Use:   "stat",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
+	Use:   "stat <Torrent>",
+	Short: "Print a summary of the torrent along with tracker stats",
+	Long: `This command prints a summary of the torrent including its info hash, a list of files, and other metadata. It also fetches swarm data from the trackers listed by the torrent.
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+Examples:
+
+bitsy stat <Magnet URL>
+bitsy stat /path/to/file.torrent
+`,
+	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx, cancel := withTimeout(context.Background(), 30*time.Second)
 		defer cancel()
