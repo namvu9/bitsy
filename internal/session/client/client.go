@@ -22,7 +22,7 @@ import (
 
 type ClientState int
 
-const MAX_PENDING_PIECES = 10
+const MAX_PENDING_PIECES = 100
 
 const (
 	STOPPED ClientState = iota

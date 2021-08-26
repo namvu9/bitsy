@@ -53,7 +53,7 @@ func (w *worker) dead() bool {
 
 func (w *worker) restart() {
 	w.LastModified = time.Now()
-	go w.requestPiece(uint32(w.index), w.fast)
+	w.requestPiece(uint32(w.index), w.fast)
 }
 
 func (w *worker) progress() float32 {
@@ -86,7 +86,6 @@ func (w *worker) run() {
 					err := w.savePiece(int(w.index), w.bytes())
 					if err != nil {
 						fmt.Println("FAILED TO SAVE", err)
-						panic("asdf")
 					}
 
 					return
@@ -171,7 +170,7 @@ func (w *worker) requestSubPiece(index uint32, offset uint32, fast bool) error {
 		Limit: 2,
 		Handler: func(peers []*peer.Peer) {
 			for _, p := range peers {
-				go p.Send(msg)
+				p.Send(msg)
 			}
 		},
 	}
@@ -184,7 +183,7 @@ func (w *worker) requestSubPiece(index uint32, offset uint32, fast bool) error {
 		Limit: 1,
 		Handler: func(peers []*peer.Peer) {
 			for _, p := range peers {
-				go p.Send(msg)
+				p.Send(msg)
 			}
 		},
 	}
