@@ -76,7 +76,22 @@ func (c *Client) handleMessage(msg messageReceived) {
 		}()
 	case peer.RequestMessage:
 		c.handleRequestMessage(v, msg.sender)
+		c.emit(UploadEvent{})
+	case peer.AllowedFastMessage:
+		c.handleAllowedFastMessage(v, msg.sender)
 	}
+}
+
+func (c *Client) handleAllowedFastMessage(msg peer.AllowedFastMessage, p *peer.Peer) {
+	if c.pieces.Get(int(msg.Index)) {
+		return
+	}
+
+	if int(msg.Index) >= len(c.torrent.Pieces()) {
+		return
+	}
+
+	go c.downloadPiece(msg.Index, true)
 }
 
 func (c *Client) subscribe(p *peer.Peer) {
@@ -119,6 +134,18 @@ func (c *Client) handleBitfieldMessage(e peer.BitFieldMessage, p *peer.Peer) (bo
 }
 
 func (c *Client) handleRequestMessage(req peer.RequestMessage, p *peer.Peer) (bool, error) {
+	if !c.pieces.Get(int(req.Index)) {
+		if p.Extensions.IsEnabled(peer.EXT_FAST) {
+			p.Send(peer.RejectRequestMessage{
+				Index:  req.Index,
+				Offset: req.Offset,
+				Length: req.Length,
+			})
+		}
+
+		return false, fmt.Errorf("Client does not have requested piece %d", req.Index)
+	}
+
 	filePath := path.Join(c.baseDir, c.torrent.HexHash(), fmt.Sprintf("%d.part", req.Index))
 
 	data, err := ioutil.ReadFile(filePath)

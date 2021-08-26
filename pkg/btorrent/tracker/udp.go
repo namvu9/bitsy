@@ -198,6 +198,7 @@ func unmarshalResponse(data []byte, v *Response) error {
 	if len(data) < 20 {
 		return fmt.Errorf("Invalid tracker response %d", len(data))
 	}
+
 	v.Action = binary.BigEndian.Uint32(data[:4])
 
 	if v.Action == ERROR {

@@ -38,7 +38,6 @@ func (c *Client) assembleTorrent(dstDir string) error {
 
 		offset += n
 		c.filesWritten[file.Name] = true
-		fmt.Println("<<<<ASSEMBLED>>>>>", file.Name)
 	}
 
 	return nil

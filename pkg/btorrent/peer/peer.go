@@ -74,7 +74,7 @@ func (p *Peer) IDStr() string {
 
 func (p *Peer) Close() error {
 	for _, fn := range p.onClose {
-		go fn(p)
+		fn(p)
 	}
 	return p.Conn.Close()
 }
@@ -136,17 +136,21 @@ func (peer *Peer) HasPiece(index int) bool {
 
 // Listen for incoming messages
 func (p *Peer) Listen(ctx context.Context) {
-	go func() {
-		for {
+	ticker := time.NewTicker(5 * time.Second)
+	for {
+		select {
+		case <-ticker.C:
 			if p.Idle() {
 				p.Close()
 				return
 			}
-			time.Sleep(5 * time.Second)
-		}
-	}()
 
-	for {
+		case <-ctx.Done():
+			p.Close()
+			return
+		default:
+		}
+
 		msg, err := UnmarshallMessage(p.Conn)
 		p.LastMessageReceived = time.Now()
 
@@ -156,7 +160,8 @@ func (p *Peer) Listen(ctx context.Context) {
 		}
 
 		if err != nil {
-			continue
+			p.Close()
+			return
 		}
 
 		switch v := msg.(type) {
@@ -176,7 +181,8 @@ func (p *Peer) Listen(ctx context.Context) {
 			p.Interested = false
 		case BitFieldMessage:
 			p.Pieces = v.BitField
-		case RequestMessage:
+		case HaveAllMessage:
+			p.Pieces = bits.Ones(len(p.Pieces))
 		case *ExtHandshakeMsg:
 			err := p.handleExtHandshakeMsg(v)
 			if err != nil {
@@ -184,9 +190,7 @@ func (p *Peer) Listen(ctx context.Context) {
 			}
 		}
 
-		go func() {
-			p.Msg <- msg
-		}()
+		p.Msg <- msg
 	}
 }
 
@@ -229,7 +233,7 @@ func (p *Peer) Init() error {
 	return nil
 }
 
-func New(c net.Conn) *Peer {
+func New(c net.Conn, bitFieldLen int) *Peer {
 	peer := &Peer{
 		Conn:                c,
 		Blocking:            true,
@@ -237,6 +241,7 @@ func New(c net.Conn) *Peer {
 		LastMessageReceived: time.Now(),
 		LastMessageSent:     time.Now(),
 		Msg:                 make(chan Message, 32),
+		Pieces:              bits.NewBitField(bitFieldLen),
 	}
 	return peer
 }

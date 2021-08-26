@@ -3,8 +3,10 @@ package btorrent
 import (
 	"bytes"
 	"crypto/sha1"
+	"encoding/binary"
 	"encoding/hex"
 	"io/ioutil"
+	"net"
 	"net/url"
 	"path"
 	"regexp"
@@ -472,8 +474,53 @@ func (t Torrent) GetPieceIndex(hash []byte) int {
 	return -1
 }
 
+// GenFastSet computes a peer's Allowed Fast Set using the
+// canonical algorithm defined in BEP-6.
+//
+// 'ip' is the IPv4 address of the peer
+//
+// 'k' is the desired size of the set
+func (t Torrent) GenFastSet(ip net.IP, k int) []int {
+	var out []int
+	var infoHash = t.InfoHash()
+
+	var hash []byte
+	hash = ip[:3]
+	hash = append(hash, infoHash[:]...)
+
+	for len(out) < k {
+		newHash := sha1.Sum(hash)
+		hash = newHash[:]
+
+		for i := 0; i < 5 && len(out) < k; i++ {
+			j := i * 4
+			y := binary.BigEndian.Uint32(hash[j : j+4])
+			index := int(y) % len(t.Pieces())
+
+			if pieceIn(index, out) {
+				continue
+			}
+
+			out = append(out, index)
+		}
+	}
+
+	return out
+}
+
+
 func New() *Torrent {
 	return &Torrent{
 		&bencode.Dictionary{},
 	}
+}
+
+func pieceIn(idx int, pieces []int) bool {
+	for _, pieceIdx := range pieces {
+		if idx == pieceIdx {
+			return true
+		}
+	}
+
+	return false
 }

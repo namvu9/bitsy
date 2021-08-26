@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -29,6 +30,11 @@ func init() {
 	rand.Read(PeerID[8:])
 
 	err := Reserved.Enable(peer.EXT_PROT)
+	if err != nil {
+		panic(err)
+	}
+
+	err = Reserved.Enable(peer.EXT_FAST)
 	if err != nil {
 		panic(err)
 	}
@@ -83,20 +89,18 @@ func (s *Session) stat(statCh <-chan interface{}) {
 		sessLen := time.Now().Sub(start)
 
 		fmt.Fprintf(&sb, "--------\n%s\n-------\n", s.torrent.Name())
+		fmt.Fprintf(&sb, "Goroutines: %d\n", runtime.NumGoroutine())
 		fmt.Fprintf(&sb, "Session Length: %s\n", fmtDuration(sessLen))
 		fmt.Fprintf(&sb, "Info Hash: %s\n", s.torrent.HexHash())
 		select {
 		case msg := <-statCh:
 			if v, ok := msg.(client.ClientStat); ok {
 				stat = v
-				fmt.Fprint(&sb, stat)
-			} else {
-				fmt.Fprint(&sb, stat)
 			}
 		default:
-			fmt.Fprint(&sb, stat)
 		}
 
+		fmt.Fprint(&sb, stat)
 		fmt.Fprint(&sb, s.swarm.Stat())
 		fmt.Fprint(&sb, "--------")
 		clear()
@@ -117,7 +121,6 @@ func (s *Session) Init() (func() error, error) {
 
 	ch.Spread(ctx, s.swarm.OutCh, s.client.SwarmCh, statCh)
 	ch.Spread(ctx, s.client.StateCh, statCh)
-
 	ch.Pipe(ctx, s.client.MsgOut, s.swarm.EventCh)
 
 	return func() error {
@@ -154,7 +157,7 @@ func (s *Session) listen() error {
 }
 
 func (s *Session) acceptHandshake(conn net.Conn) error {
-	p := peer.New(conn)
+	p := peer.New(conn, len(s.torrent.Pieces()))
 	err := p.Init()
 	if err != nil {
 		return err
@@ -166,14 +169,13 @@ func (s *Session) acceptHandshake(conn net.Conn) error {
 		return err
 	}
 
-	err = Handshake(p, s.torrent.InfoHash(), s.peerID)
+	err = Handshake(p, s.torrent.InfoHash(), s.peerID, Reserved.ReservedBytes())
 	if err != nil {
 		return err
 	}
 
-	go func() {
-		s.swarm.EventCh <- swarm.JoinEvent{Peer: p}
-	}()
+	s.swarm.EventCh <- swarm.JoinEvent{Peer: p}
+
 	return nil
 }
 

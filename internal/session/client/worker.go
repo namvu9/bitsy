@@ -39,6 +39,8 @@ type worker struct {
 	torrent     btorrent.Torrent
 	baseDir     string
 	lock        sync.Mutex
+
+	fast bool
 }
 
 func (w *worker) idle() bool {
@@ -51,7 +53,7 @@ func (w *worker) dead() bool {
 
 func (w *worker) restart() {
 	w.LastModified = time.Now()
-	go w.requestPiece(uint32(w.index))
+	go w.requestPiece(uint32(w.index), w.fast)
 }
 
 func (w *worker) progress() float32 {
@@ -62,7 +64,7 @@ func (w *worker) progress() float32 {
 
 func (w *worker) run() {
 	go func() {
-		w.requestPiece(w.index)
+		w.requestPiece(w.index, w.fast)
 		for {
 			select {
 			case <-w.stop:
@@ -84,6 +86,7 @@ func (w *worker) run() {
 					err := w.savePiece(int(w.index), w.bytes())
 					if err != nil {
 						fmt.Println("FAILED TO SAVE", err)
+						panic("asdf")
 					}
 
 					return
@@ -117,7 +120,7 @@ func (w *worker) bytes() []byte {
 	return buf
 }
 
-func (w *worker) requestPiece(index uint32) error {
+func (w *worker) requestPiece(index uint32, fast bool) error {
 	w.lock.Lock()
 	defer w.lock.Unlock()
 
@@ -129,7 +132,7 @@ func (w *worker) requestPiece(index uint32) error {
 			continue
 		}
 
-		err := w.requestSubPiece(index, offset)
+		err := w.requestSubPiece(index, offset, fast)
 		if err != nil {
 			return err
 		}
@@ -138,7 +141,7 @@ func (w *worker) requestPiece(index uint32) error {
 	return nil
 }
 
-func (w *worker) requestSubPiece(index uint32, offset uint32) error {
+func (w *worker) requestSubPiece(index uint32, offset uint32, fast bool) error {
 	var (
 		remaining      = uint32(w.pieceLength) - offset
 		subPieceLength = uint32(16 * 1024)
@@ -161,7 +164,8 @@ func (w *worker) requestSubPiece(index uint32, offset uint32) error {
 			return int(p1.Uploaded) - int(p2.Uploaded)
 		},
 		Filter: func(p *peer.Peer) bool {
-			return !p.Blocking && p.HasPiece(int(index))
+			hasPiece := p.HasPiece(int(index))
+			return !p.Blocking && hasPiece || hasPiece && w.fast
 		},
 
 		Limit: 2,

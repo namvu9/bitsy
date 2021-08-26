@@ -85,22 +85,27 @@ func (s *Swarm) dialPeers(ctx context.Context, n int) {
 
 func (s *Swarm) Init(ctx context.Context, port uint16) {
 	var (
-		ticker = time.NewTicker(5 * time.Second)
-		group  = s.trackerTiers[0]
+		group = s.trackerTiers[0]
 	)
 
 	group.Announce(tracker.NewRequest(s.dialCfg.InfoHash, port, s.dialCfg.PeerID))
 
-	for {
-		select {
-		case <-ticker.C:
+	go func() {
+		for {
 			// Get more peers
 			// TODO: Keep track of which peers have most recently
 			// been dialed
 			if len(s.peers) < MIN_PEERS {
-				go s.dialPeers(ctx, 10)
+				s.dialPeers(ctx, 10)
 			}
 
+			time.Sleep(5 * time.Second)
+		}
+
+	}()
+
+	for {
+		select {
 		case event := <-s.EventCh:
 			propagate, err := s.handleEvent(event)
 			if err != nil {
@@ -149,7 +154,6 @@ func (s *Swarm) removePeer(p *peer.Peer) (bool, error) {
 }
 
 func shuffle(peers []net.Addr) {
-	// Shuffle peers
 	rand.Seed(time.Now().UnixNano())
 	rand.Shuffle(len(peers), func(i, j int) {
 		peers[i], peers[j] = peers[j], peers[i]

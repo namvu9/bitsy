@@ -144,17 +144,15 @@ func ForwardPorts(from, to uint16) (uint16, error) {
 
 // Handshake attempts to perform a handshake with the given
 // client at addr with infoHash.
-func Handshake(conn net.Conn, infoHash [20]byte, peerID [20]byte) error {
+func Handshake(conn net.Conn, infoHash [20]byte, peerID [20]byte, reserved [8]byte) error {
 	msg := peer.HandshakeMessage{
 		// Pass in as arguments
 		PStr:     PStr,
 		PStrLen:  byte(len(PStr)),
 		InfoHash: infoHash,
 		PeerID:   peerID,
+		Reserved: reserved,
 	}
-
-	// Support for the extension protocol
-	msg.Reserved[5] |= 0x10
 
 	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	_, err := conn.Write(msg.Bytes())

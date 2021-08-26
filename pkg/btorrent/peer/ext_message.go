@@ -66,7 +66,7 @@ func (msg *ExtHandshakeMsg) Bytes() []byte {
 	return buf.Bytes()
 }
 
-func UnmarshalMsg(data []byte) (Message, error) {
+func UnmarshalExtMessage(data []byte) (Message, error) {
 	msgType := data[0]
 
 	switch msgType {

@@ -176,8 +176,6 @@ func TestTracker(t *testing.T) {
 	defer server.Stop()
 	go server.Listen(t, 100)
 
-	t.Skip("LOL")
-
 	t.Run("UDPAnnounce", func(t *testing.T) {
 
 		url, err := url.Parse("udp://localhost:8888/announce")

@@ -21,6 +21,11 @@ const (
 	Request       byte = 6
 	Piece         byte = 7
 	Cancel        byte = 8
+	Suggest       byte = 13
+	HaveAll       byte = 14
+	HaveNone      byte = 15
+	Reject        byte = 16
+	AllowedFast   byte = 17
 	Extended      byte = 20
 )
 
@@ -235,6 +240,74 @@ func (m CancelMessage) Bytes() []byte {
 	return buf.Bytes()
 }
 
+type HaveAllMessage struct{}
+
+func (m HaveAllMessage) Bytes() []byte {
+	var buf bytes.Buffer
+
+	binary.Write(&buf, binary.BigEndian, uint32(1))
+	buf.WriteByte(HaveAll)
+
+	return buf.Bytes()
+}
+
+type HaveNoneMessage struct{}
+
+func (m HaveNoneMessage) Bytes() []byte {
+	var buf bytes.Buffer
+
+	binary.Write(&buf, binary.BigEndian, uint32(1))
+	buf.WriteByte(HaveNone)
+
+	return buf.Bytes()
+}
+
+type AllowedFastMessage struct {
+	Index uint32
+}
+
+func (m AllowedFastMessage) Bytes() []byte {
+	var buf bytes.Buffer
+
+	binary.Write(&buf, binary.BigEndian, uint32(5))
+	buf.WriteByte(AllowedFast)
+	binary.Write(&buf, binary.BigEndian, m.Index)
+
+	return buf.Bytes()
+}
+
+type SuggestPieceMessage struct {
+	Index uint32
+}
+
+func (m SuggestPieceMessage) Bytes() []byte {
+	var buf bytes.Buffer
+
+	binary.Write(&buf, binary.BigEndian, uint32(5))
+	buf.WriteByte(Suggest)
+	binary.Write(&buf, binary.BigEndian, m.Index)
+
+	return buf.Bytes()
+}
+
+type RejectRequestMessage struct {
+	Index  uint32
+	Offset uint32
+	Length uint32
+}
+
+func (m RejectRequestMessage) Bytes() []byte {
+	var buf bytes.Buffer
+
+	binary.Write(&buf, binary.BigEndian, int32(13))
+	buf.WriteByte(byte(Reject))
+	binary.Write(&buf, binary.BigEndian, m.Index)
+	binary.Write(&buf, binary.BigEndian, m.Offset)
+	binary.Write(&buf, binary.BigEndian, m.Length)
+
+	return buf.Bytes()
+}
+
 func UnmarshalHandshake(r io.Reader, msg *HandshakeMessage) error {
 	var buf bytes.Buffer
 
@@ -263,7 +336,11 @@ func UnmarshalHandshake(r io.Reader, msg *HandshakeMessage) error {
 func UnmarshallMessage(r io.ReadCloser) (Message, error) {
 	buf := make([]byte, 4)
 
-	_, err := r.Read(buf)
+	n, err := r.Read(buf)
+	if n == 0 {
+		return nil, io.EOF
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -317,10 +394,26 @@ func UnmarshallMessage(r io.ReadCloser) (Message, error) {
 	case Cancel:
 		return UnmarshalCancelMessage(payload)
 	case Extended:
-		return UnmarshalMsg(payload)
+		return UnmarshalExtMessage(payload)
+	case HaveAll:
+		return HaveAllMessage{}, nil
+	case HaveNone:
+		return HaveNoneMessage{}, nil
+	case AllowedFast:
+		return UnmarshalAllowedFastMessage(payload)
+
 	default:
 		return KeepAliveMessage{}, nil
 	}
+}
+
+func UnmarshalAllowedFastMessage(data []byte) (AllowedFastMessage, error) {
+	if len(data) != 4 {
+		return AllowedFastMessage{}, fmt.Errorf("corrupted data")
+	}
+
+	idx := binary.BigEndian.Uint32(data[:4])
+	return AllowedFastMessage{Index: idx}, nil
 }
 
 // TODO: TESTS
