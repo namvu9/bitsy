@@ -158,15 +158,12 @@ func (c *Client) nextNPieces(n int, exclude map[int]*worker) []int {
 
 func (c *Client) download() {
 	var (
-		ticker = time.NewTicker(2 * time.Second)
-	)
-
-	c.downloadN(5)
-
-	var (
+		ticker       = time.NewTicker(2 * time.Second)
 		downloadRate = 0.0
 		batch        = 0
 	)
+
+	c.downloadN(5)
 
 	for {
 		select {

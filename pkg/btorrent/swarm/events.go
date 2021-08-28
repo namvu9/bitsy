@@ -10,6 +10,7 @@ import (
 
 type JoinEvent struct {
 	*peer.Peer
+	Hash [20]byte
 }
 
 type LeaveEvent struct {

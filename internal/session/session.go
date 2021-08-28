@@ -1,18 +1,15 @@
 package session
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math/rand"
-	"net"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"time"
 
-	"github.com/namvu9/bitsy/internal/errors"
 	"github.com/namvu9/bitsy/internal/session/client"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
@@ -23,6 +20,8 @@ import (
 
 var PeerID = [20]byte{'-', 'B', 'T', '0', '0', '0', '0', '-'}
 var Reserved = peer.NewExtensionsField([8]byte{})
+
+const MAX_CONNS = 30
 
 const PStr = "BitTorrent protocol"
 
@@ -98,6 +97,7 @@ func (s *Session) stat(statCh <-chan interface{}) {
 				stat = v
 			}
 		default:
+			stat = s.client.Stat()
 		}
 
 		fmt.Fprint(&sb, stat)
@@ -112,9 +112,21 @@ func (s *Session) stat(statCh <-chan interface{}) {
 func (s *Session) Init() (func() error, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.startedAt = time.Now()
+
+	conn := NewConnectionService(s.port, s.peerID, func(i interface{}) {
+		switch v := i.(type) {
+		case swarm.JoinEvent:
+			s.swarm.EventCh <- v
+		}
+	}, MAX_CONNS)
+	conn.Register(s.torrent)
+	err := conn.Init(ctx)
+	if err != nil {
+		panic(err)
+	}
+
 	go s.swarm.Init(ctx, s.port)
 	go s.client.Start(ctx)
-	go s.listen()
 
 	statCh := make(chan interface{}, 32)
 	go s.stat(statCh)
@@ -127,56 +139,6 @@ func (s *Session) Init() (func() error, error) {
 		cancel()
 		return nil
 	}, nil
-}
-
-func (s *Session) listen() error {
-	var (
-		addr = fmt.Sprintf("%s:%d", s.ip, s.port)
-		bn   = NewBoundedNet(30)
-	)
-
-	listener, err := bn.Listen("tcp", addr)
-	if err != nil {
-		return err
-	}
-	defer listener.Close()
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			err = errors.Wrap(err)
-			fmt.Println(err)
-			continue
-		}
-
-		err = s.acceptHandshake(conn)
-		if err != nil {
-			conn.Close()
-		}
-	}
-}
-
-func (s *Session) acceptHandshake(conn net.Conn) error {
-	p := peer.New(conn, len(s.torrent.Pieces()))
-	err := p.Init()
-	if err != nil {
-		return err
-	}
-
-	refhash := s.torrent.InfoHash()
-	if !bytes.Equal(p.InfoHash[:], refhash[:]) {
-		err := fmt.Errorf("Unknown info hash: %x %x", p.InfoHash, refhash)
-		return err
-	}
-
-	err = Handshake(p, s.torrent.InfoHash(), s.peerID, Reserved.ReservedBytes())
-	if err != nil {
-		return err
-	}
-
-	s.swarm.EventCh <- swarm.JoinEvent{Peer: p}
-
-	return nil
 }
 
 func New(cfg Config, t btorrent.Torrent) *Session {

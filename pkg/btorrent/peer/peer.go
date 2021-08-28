@@ -228,12 +228,10 @@ func (p *Peer) Init() error {
 	p.ID = msg.PeerID[:]
 	p.InfoHash = msg.InfoHash
 
-	go p.Listen(context.Background())
-
 	return nil
 }
 
-func New(c net.Conn, bitFieldLen int) *Peer {
+func New(c net.Conn) *Peer {
 	peer := &Peer{
 		Conn:                c,
 		Blocking:            true,
@@ -241,7 +239,6 @@ func New(c net.Conn, bitFieldLen int) *Peer {
 		LastMessageReceived: time.Now(),
 		LastMessageSent:     time.Now(),
 		Msg:                 make(chan Message, 32),
-		Pieces:              bits.NewBitField(bitFieldLen),
 	}
 	return peer
 }

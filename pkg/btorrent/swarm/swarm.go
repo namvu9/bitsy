@@ -76,7 +76,7 @@ func (s *Swarm) dialPeers(ctx context.Context, n int) {
 
 			count++
 			go func() {
-				s.EventCh <- JoinEvent{p}
+				s.EventCh <- JoinEvent{Peer: p, Hash: s.Torrent.InfoHash()}
 			}()
 			cancel()
 		}
