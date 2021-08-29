@@ -1,9 +1,14 @@
 package peers
 
 import (
+	"fmt"
+	"math/rand"
+	"net"
+	"strings"
+	"time"
+
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
-	"github.com/namvu9/bitsy/pkg/btorrent/swarm"
 	"github.com/namvu9/bitsy/pkg/btorrent/tracker"
 )
 
@@ -29,7 +34,7 @@ type Service interface {
 	// Return info for peers that aren't currently in the
 	// swarm
 	Discover(InfoHash, int) []tracker.PeerInfo
-	Swarms() map[InfoHash]swarm.SwarmStat
+	Swarms() map[InfoHash]SwarmStat
 }
 type InfoHash = [20]byte
 
@@ -60,11 +65,11 @@ func (service *peerService) Get(hash InfoHash, req GetRequest) GetResponse {
 	return GetResponse{Peers: out}
 }
 
-func (service *peerService) Swarms() map[InfoHash]swarm.SwarmStat {
-	out := make(map[InfoHash]swarm.SwarmStat)
+func (service *peerService) Swarms() map[InfoHash]SwarmStat {
+	out := make(map[InfoHash]SwarmStat)
 
 	for hash, peers := range service.peers {
-		stat := swarm.SwarmStat{
+		stat := SwarmStat{
 			Peers: len(peers),
 		}
 
@@ -159,4 +164,31 @@ func NewService(emitter chan interface{}, port uint16, peerID [20]byte) Service 
 		port:     port,
 		peerID:   peerID,
 	}
+}
+
+func shuffle(peers []net.Addr) {
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(peers), func(i, j int) {
+		peers[i], peers[j] = peers[j], peers[i]
+	})
+}
+
+type SwarmStat struct {
+	Peers       int
+	Choked      int
+	Blocking    int
+	Interested  int
+	Interesting int
+}
+
+func (s SwarmStat) String() string {
+	var sb strings.Builder
+
+	fmt.Fprintf(&sb, "Peers: %d\n", s.Peers)
+	fmt.Fprintf(&sb, "Choked: %d\n", s.Choked)
+	fmt.Fprintf(&sb, "Choking: %d\n", s.Blocking)
+	fmt.Fprintf(&sb, "Interested: %d\n", s.Interested)
+	fmt.Fprintf(&sb, "Interesting: %d\n", s.Interesting)
+
+	return sb.String()
 }
