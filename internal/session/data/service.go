@@ -23,10 +23,17 @@ type Service interface {
 	GetPiece(InfoHash, peer.RequestMessage) ([]byte, error)
 
 	AddDataStream(InfoHash, *peer.Peer) error
+
+	// TODO: Implement piece priority:
+	// e.g., AllowedFast? Rare piece?
+	SetPriority(InfoHash, []int) error
 }
 
 type dataService struct {
-	clients     map[InfoHash]*Client
+	clients  map[InfoHash]*Client
+	torrents map[InfoHash]btorrent.Torrent
+	ranks    map[InfoHash][]int
+
 	baseDir     string
 	downloadDir string
 	emitter     chan interface{}
@@ -78,6 +85,8 @@ func (ds *dataService) Register(t btorrent.Torrent, opts ...Option) {
 	if _, ok := ds.clients[t.InfoHash()]; !ok {
 		c := New(t, ds.baseDir, ds.downloadDir, ds.emitter, opts...)
 		ds.clients[t.InfoHash()] = c
+		ds.torrents[t.InfoHash()] = t
+		ds.ranks[t.InfoHash()] = make([]int, len(t.Pieces()))
 	}
 }
 
@@ -108,9 +117,25 @@ func (ds *dataService) Status(hash InfoHash) (ClientState, error) {
 	return c.state, nil
 }
 
+func (ds *dataService) SetPriority(hash InfoHash, ranks []int) error {
+	t, ok := ds.torrents[hash]
+
+	if !ok {
+		return fmt.Errorf("unknown info hash")
+	}
+
+	if len(ranks) != len(t.Pieces()) {
+		panic("invalid length for ranks")
+	}
+
+	return nil
+}
+
 func NewService(baseDir, downloadDir string, emitter chan interface{}) Service {
 	return &dataService{
 		clients:     make(map[InfoHash]*Client),
+		torrents:    make(map[InfoHash]btorrent.Torrent),
+		ranks:       make(map[InfoHash][]int),
 		baseDir:     baseDir,
 		downloadDir: downloadDir,
 		emitter:     emitter,

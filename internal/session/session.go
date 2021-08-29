@@ -112,6 +112,8 @@ func (s *Session) handlePeerMessage(ev peers.MessageReceived) {
 	}
 
 	switch msg := ev.Msg.(type) {
+	case peer.AllowedFastMessage:
+		// TODO: IMPLEMENT
 	case peer.BitFieldMessage:
 		t := s.torrents[ev.Hash]
 		for idx := range t.Pieces() {

@@ -31,25 +31,13 @@ func (c *Client) handlePieceMessage(msg peer.PieceMessage, workers map[int]*work
 	return false, nil
 }
 
-// func cancelMessage(idx int) swarm.MulticastMessage {
-// 	return swarm.MulticastMessage{
-// 		Filter: func(p *peer.Peer) bool {
-// 			return p.HasPiece(idx)
-// 		},
-// 		Handler: func(peers []*peer.Peer) {
-// 			for _, p := range peers {
-// 				p.Send(peer.CancelMessage{Index: uint32(idx)})
-// 			}
-// 		},
-// 	}
-// }
-
 func (c *Client) handleMessage(msg messageReceived) {
 	switch v := msg.msg.(type) {
 	case peer.PieceMessage:
 		go func() {
 			c.DataIn <- v
 		}()
+		// TODO: This isn't used anymore. Move to Session
 	case peer.AllowedFastMessage:
 		c.handleAllowedFastMessage(v, msg.sender)
 	}
@@ -67,17 +55,17 @@ func (c *Client) handleAllowedFastMessage(msg peer.AllowedFastMessage, p *peer.P
 	go c.downloadPiece(msg.Index, true)
 }
 
-func (c *Client) handleRequestMessage(req peer.RequestMessage) ([]byte, error){
+func (c *Client) handleRequestMessage(req peer.RequestMessage) ([]byte, error) {
 	//if !c.pieces.Get(int(req.Index)) {
-		//if p.Extensions.IsEnabled(peer.EXT_FAST) {
-			//p.Send(peer.RejectRequestMessage{
-				//Index:  req.Index,
-				//Offset: req.Offset,
-				//Length: req.Length,
-			//})
-		//}
+	//if p.Extensions.IsEnabled(peer.EXT_FAST) {
+	//p.Send(peer.RejectRequestMessage{
+	//Index:  req.Index,
+	//Offset: req.Offset,
+	//Length: req.Length,
+	//})
+	//}
 
-		//return []byte{}, fmt.Errorf("Client does not have requested piece %d", req.Index)
+	//return []byte{}, fmt.Errorf("Client does not have requested piece %d", req.Index)
 	//}
 
 	filePath := path.Join(c.baseDir, c.torrent.HexHash(), fmt.Sprintf("%d.part", req.Index))
