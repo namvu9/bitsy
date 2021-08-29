@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/namvu9/bitsy/pkg/bits"
@@ -84,7 +83,6 @@ type Client struct {
 	Uploaded     int
 
 	workers    map[int]*worker
-	workerLock sync.RWMutex
 }
 
 func (c *Client) Stop() error {
@@ -132,8 +130,6 @@ func (c *Client) Start(ctx context.Context) error {
 // TODO: TEST
 func (c *Client) nextNPieces(n int, exclude map[int]*worker) []int {
 	var remaining []int
-	c.workerLock.RLock()
-	defer c.workerLock.RUnlock()
 
 	for i := range c.torrent.Pieces() {
 		if c.pieces.Get(i) {
