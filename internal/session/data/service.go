@@ -82,11 +82,15 @@ func (ds *dataService) AddDataStream(hash InfoHash, p *peer.Peer) error {
 }
 
 func (ds *dataService) Register(t btorrent.Torrent, opts ...Option) {
-	if _, ok := ds.clients[t.InfoHash()]; !ok {
+	if client, ok := ds.clients[t.InfoHash()]; !ok {
 		c := New(t, ds.baseDir, ds.downloadDir, ds.emitter, opts...)
 		ds.clients[t.InfoHash()] = c
 		ds.torrents[t.InfoHash()] = t
 		ds.ranks[t.InfoHash()] = make([]int, len(t.Pieces()))
+	} else if len(opts) > 0 {
+		for _, opt := range opts {
+			opt(client)
+		}
 	}
 }
 

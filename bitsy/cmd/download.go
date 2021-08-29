@@ -114,6 +114,10 @@ bitsy download /path/to/torrent
 			opts = append(opts, data.WithFiles(files...))
 		}
 
+		fmt.Printf("Initiating session... ")
+		s.Init()
+		fmt.Printf("done\n")
+
 		if len(args) > 0 {
 			t, err := btorrent.Load(args[0])
 			if err != nil {
@@ -134,10 +138,6 @@ bitsy download /path/to/torrent
 			fmt.Printf("done\n")
 			s.Register(*t, opts...)
 		}
-
-		fmt.Printf("Initiating session... ")
-		s.Init()
-		fmt.Printf("done\n")
 
 		select {}
 

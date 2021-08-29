@@ -317,6 +317,14 @@ func (s *Session) stat() {
 		fmt.Printf("Download rate: %s / s\n", clientStat.DownloadRate)
 		fmt.Printf("Pending pieces: %d\n", clientStat.Pending)
 
+		for _, file := range clientStat.Files {
+			if file.Ignored {
+				continue
+			}
+
+			fmt.Printf("%s (%s/%s)\n", file.Name, file.Downloaded, file.Size)
+		}
+
 		fmt.Println(s.peers.Swarms()[hash])
 
 	}
@@ -374,8 +382,6 @@ func (s *Session) Register(t btorrent.Torrent, opts ...data.Option) {
 
 func New(cfg Config) *Session {
 	cmd := make(chan interface{}, 32)
-
-	fmt.Println(cfg.DownloadDir)
 
 	s := &Session{
 		peerID: PeerID,

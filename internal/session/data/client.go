@@ -177,10 +177,6 @@ func (c *Client) clearCompletedPieces() {
 		}
 	}
 
-	if len(c.workers) < 50 {
-		c.downloadN(10)
-	}
-
 	for _, ev := range out {
 		c.MsgOut <- ev
 	}
@@ -203,13 +199,20 @@ func (c *Client) download() {
 				continue
 			}
 
-			if !done {
-				batch += len(msg.Piece)
+			if done {
+				if len(c.workers) < 50 {
+					c.downloadN(1)
+				}
 				continue
 			}
 
+			batch += len(msg.Piece)
+
 		case <-ticker.C:
 			c.clearCompletedPieces()
+			if len(c.workers) < 50 {
+				c.downloadN(1)
+			}
 
 			downloadRate = float64(batch) / 2.0
 
