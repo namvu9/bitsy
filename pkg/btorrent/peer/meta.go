@@ -164,14 +164,14 @@ func GetInfoDict(ctx context.Context, peers []net.Addr, cfg DialConfig) (*bencod
 				continue
 			}
 			if !p.Extensions.IsEnabled(EXT_PROT) {
-				p.Close()
+				p.Close("peer does not support EXT_PROT")
 				continue
 			}
 
 			go func(p *Peer) {
 				ctx, cancel := context.WithCancel(ctx)
 				defer func() {
-					p.Close()
+					p.Close("done")
 					cancel()
 				}()
 

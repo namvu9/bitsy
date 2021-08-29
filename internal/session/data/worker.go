@@ -1,4 +1,4 @@
-package client
+package data
 
 import (
 	"fmt"
@@ -9,7 +9,6 @@ import (
 
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
-	"github.com/namvu9/bitsy/pkg/btorrent/swarm"
 )
 
 // lenSubpiece is the maximum length to use when requesting
@@ -52,14 +51,7 @@ func (w *worker) dead() bool {
 }
 
 func (w *worker) restart() {
-	w.LastModified = time.Now()
 	w.requestPiece(uint32(w.index), w.fast)
-}
-
-func (w *worker) progress() float32 {
-	w.lock.Lock()
-	defer w.lock.Unlock()
-	return float32(len(w.subpieces)*lenSubpiece) / float32(w.pieceLength)
 }
 
 func (w *worker) run() {
@@ -97,14 +89,7 @@ func (w *worker) run() {
 }
 
 func (w *worker) isComplete() bool {
-	w.lock.Lock()
-	defer w.lock.Unlock()
-	var sum int
-	for _, subpiece := range w.subpieces {
-		sum += len(subpiece)
-	}
-
-	return uint64(sum) == w.pieceLength
+	return uint64(16*1024*len(w.subpieces)) >= w.pieceLength
 }
 
 func (w *worker) bytes() []byte {
@@ -120,9 +105,6 @@ func (w *worker) bytes() []byte {
 }
 
 func (w *worker) requestPiece(index uint32, fast bool) error {
-	w.lock.Lock()
-	defer w.lock.Unlock()
-
 	var subPieceLength = 16 * 1024
 
 	for offset := uint32(0); offset < uint32(w.pieceLength); offset += uint32(subPieceLength) {
@@ -131,10 +113,7 @@ func (w *worker) requestPiece(index uint32, fast bool) error {
 			continue
 		}
 
-		err := w.requestSubPiece(index, offset, fast)
-		if err != nil {
-			return err
-		}
+		w.requestSubPiece(index, offset, fast)
 	}
 
 	return nil
@@ -157,35 +136,9 @@ func (w *worker) requestSubPiece(index uint32, offset uint32, fast bool) error {
 		msg.Length = uint32(subPieceLength)
 	}
 
-	w.out <- swarm.MulticastMessage{
-		OrderBy: func(p1, p2 *peer.Peer) int {
-			// TODO: use uploadRate instead of total uploaded
-			return int(p1.Uploaded) - int(p2.Uploaded)
-		},
-		Filter: func(p *peer.Peer) bool {
-			hasPiece := p.HasPiece(int(index))
-			return !p.Blocking && hasPiece || hasPiece && w.fast
-		},
-
-		Limit: 2,
-		Handler: func(peers []*peer.Peer) {
-			for _, p := range peers {
-				p.Send(msg)
-			}
-		},
-	}
-
-	// Ask random peer
-	w.out <- swarm.MulticastMessage{
-		Filter: func(p *peer.Peer) bool {
-			return p.HasPiece(int(index))
-		},
-		Limit: 1,
-		Handler: func(peers []*peer.Peer) {
-			for _, p := range peers {
-				p.Send(msg)
-			}
-		},
+	w.out <- RequestMessage{
+		Hash:           w.torrent.InfoHash(),
+		RequestMessage: msg,
 	}
 
 	return nil

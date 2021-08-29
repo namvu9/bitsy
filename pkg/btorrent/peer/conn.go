@@ -42,12 +42,14 @@ func Dial(ctx context.Context, addr net.Addr, cfg DialConfig) (*Peer, error) {
 		return nil, err
 	}
 
-	p := New(conn, 0)
+	p := New(conn)
 	err = p.Init()
 	if err != nil {
 		conn.Close()
 		return nil, err
 	}
+
+	go p.Listen(ctx)
 
 	return p, nil
 }

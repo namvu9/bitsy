@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/namvu9/bitsy/internal/session"
+	"github.com/namvu9/bitsy/internal/session/data"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/spf13/cobra"
 )
@@ -78,14 +79,6 @@ bitsy download -f 0 /path/to/torrent
 bitsy download /path/to/torrent
 `,
 	Run: func(cmd *cobra.Command, args []string) {
-		t, err := btorrent.Load(args[0])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Could not load torrent: %s\n", err)
-			os.Exit(1)
-		}
-
-		fmt.Printf("--------\n%s\n-------\n", t.Name())
-		fmt.Printf("%s\n", t.HexHash())
 		fmt.Printf("Forwarding port... ")
 
 		// TODO: use port from config
@@ -94,21 +87,7 @@ bitsy download /path/to/torrent
 			fmt.Println("Failed to find open port", err)
 			return
 		}
-		fmt.Printf("%d\n", port)
-
-		fmt.Printf("Fetching metadata... ")
-		if _, ok := t.Info(); !ok {
-			ctx, cancel := withTimeout(context.Background(), 10*time.Second)
-			t2, err := getMeta(ctx, t, port)
-			if err != nil {
-				cancel()
-				return
-			}
-			t = t2
-			cancel()
-		}
-		fmt.Printf("done\n")
-		fmt.Printf("Initiating session\n")
+		fmt.Println(port)
 
 		baseDir, err := BaseDir()
 		if err != nil {
@@ -126,11 +105,39 @@ bitsy download /path/to/torrent
 			BaseDir:        baseDir,
 			DownloadDir:    downloadDir,
 			MaxConnections: 50,
+			IP:             "192.168.0.4",
 			Port:           port,
-			Files:          files,
-		}, *t)
+		})
 
+		opts := []data.Option{}
+		if len(files) > 0 {
+			opts = append(opts, data.WithFiles(files...))
+		}
+
+		fmt.Printf("Initiating session... ")
 		s.Init()
+		fmt.Printf("done\n")
+
+		if len(args) > 0 {
+			t, err := btorrent.Load(args[0])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Could not load torrent: %s\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Fetching metadata... ")
+			if _, ok := t.Info(); !ok {
+				ctx, cancel := withTimeout(context.Background(), 10*time.Second)
+				t2, err := getMeta(ctx, t, port)
+				if err != nil {
+					cancel()
+					return
+				}
+				t = t2
+				cancel()
+			}
+			fmt.Printf("done\n")
+			s.Register(*t, opts...)
+		}
 
 		select {}
 

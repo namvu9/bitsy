@@ -116,6 +116,7 @@ func (tg *TrackerGroup) Announce(req Request) map[string]PeerInfo {
 		go func(tracker Tracker) {
 			if !tracker.ShouldAnnounce() {
 				wg.Done()
+				// TODO: Return last response
 				return
 			}
 

@@ -1,4 +1,4 @@
-package client
+package data
 
 import (
 	"fmt"
@@ -8,9 +8,8 @@ import (
 )
 
 type FileStat struct {
-	Index   int
-	Ignored bool
-	//Status     ClientStat
+	Index      int
+	Ignored    bool
 	Name       string
 	Size       btorrent.Size
 	Downloaded btorrent.Size
@@ -112,7 +111,7 @@ func (c *Client) Stat() ClientStat {
 		Left:         btorrent.Size((len(c.torrent.Pieces()) - c.pieces.GetSum()) * int(c.torrent.PieceLength())),
 
 		Pieces:      c.pieces.GetSum(),
-		Pending:     c.Pending,
+		Pending:     len(c.workers),
 		TotalPieces: len(c.torrent.Pieces()),
 		Files:       fs,
 

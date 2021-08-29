@@ -1,24 +1,22 @@
 package session
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
 	"os"
 	"os/exec"
-	"runtime"
+	"path"
 	"strings"
 	"time"
 
-	"github.com/namvu9/bitsy/internal/errors"
-	"github.com/namvu9/bitsy/internal/session/client"
+	"github.com/namvu9/bitsy/internal/session/conn"
+	"github.com/namvu9/bitsy/internal/session/data"
+	"github.com/namvu9/bitsy/internal/session/peers"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
-	"github.com/namvu9/bitsy/pkg/btorrent/swarm"
-	"github.com/namvu9/bitsy/pkg/btorrent/tracker"
-	"github.com/namvu9/bitsy/pkg/ch"
 )
 
 var PeerID = [20]byte{'-', 'B', 'T', '0', '0', '0', '0', '-'}
@@ -40,184 +38,269 @@ func init() {
 	}
 }
 
-// TorrentID is the SHA-1 hash of the torrent's bencoded
-// info dictionary
-type TorrentID [20]byte
-
 // Session represents an instance of the client and manages
 // the client's state.
 type Session struct {
 	startedAt time.Time
 
-	torrent  btorrent.Torrent
-	trackers []*tracker.TrackerGroup
-	swarm    *swarm.Swarm
-	client   *client.Client
+	baseDir  string
+	EventsIn chan interface{}
+	torrents map[[20]byte]btorrent.Torrent
 
-	// Config
-	peerID      [20]byte
-	baseDir     string
-	downloadDir string
-	ip          string // The ip address to listen on
-	port        uint16 // the port to listen on
-	maxConns    int    // Max open peer connections
-	msgIn       chan interface{}
+	data  data.Service
+	conn  conn.Service
+	peers peers.Service
 }
 
-type Event interface{}
-
-func clear() {
-	cmd := exec.Command("clear")
-	cmd.Stdout = os.Stdout
-	cmd.Run()
-}
-
-func fmtDuration(d time.Duration) string {
-	h := d / time.Hour
-	d -= h * time.Hour
-	m := d / time.Minute
-	d -= m * time.Minute
-	s := d / time.Second
-	return fmt.Sprintf("%02d:%02d:%02d", h, m, s)
-}
-
-func (s *Session) stat(statCh <-chan interface{}) {
-	start := time.Now()
-	var stat client.ClientStat
+func (s *Session) handleEvents(ctx context.Context) {
 	for {
-		var sb strings.Builder
-		sessLen := time.Now().Sub(start)
-
-		fmt.Fprintf(&sb, "--------\n%s\n-------\n", s.torrent.Name())
-		fmt.Fprintf(&sb, "Goroutines: %d\n", runtime.NumGoroutine())
-		fmt.Fprintf(&sb, "Session Length: %s\n", fmtDuration(sessLen))
-		fmt.Fprintf(&sb, "Info Hash: %s\n", s.torrent.HexHash())
-		select {
-		case msg := <-statCh:
-			if v, ok := msg.(client.ClientStat); ok {
-				stat = v
-			}
-		default:
-		}
-
-		fmt.Fprint(&sb, stat)
-		fmt.Fprint(&sb, s.swarm.Stat())
-		fmt.Fprint(&sb, "--------")
-		clear()
-		fmt.Println(sb.String())
-		time.Sleep(time.Second)
-	}
-}
-
-func (s *Session) Init() (func() error, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	s.startedAt = time.Now()
-	go s.swarm.Init(ctx, s.port)
-	go s.client.Start(ctx)
-	go s.listen()
-
-	statCh := make(chan interface{}, 32)
-	go s.stat(statCh)
-
-	ch.Spread(ctx, s.swarm.OutCh, s.client.SwarmCh, statCh)
-	ch.Spread(ctx, s.client.StateCh, statCh)
-	ch.Pipe(ctx, s.client.MsgOut, s.swarm.EventCh)
-
-	return func() error {
-		cancel()
-		return nil
-	}, nil
-}
-
-func (s *Session) listen() error {
-	var (
-		addr = fmt.Sprintf("%s:%d", s.ip, s.port)
-		bn   = NewBoundedNet(30)
-	)
-
-	listener, err := bn.Listen("tcp", addr)
-	if err != nil {
-		return err
-	}
-	defer listener.Close()
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			err = errors.Wrap(err)
-			fmt.Println(err)
-			continue
-		}
-
-		err = s.acceptHandshake(conn)
-		if err != nil {
-			conn.Close()
+		event := <-s.EventsIn
+		switch v := event.(type) {
+		case PauseCmd:
+			s.data.Stop(v.Hash)
+		case RegisterCmd:
+			s.register(v.t, v.opts)
+		case conn.NewConnEvent:
+			s.handleNewConn(v)
+		case conn.ConnCloseEvent:
+			s.handleCloseConn(v)
+		case peers.MessageReceived:
+			s.handlePeerMessage(v)
+		case data.RequestMessage:
+			s.handleRequestMessage(v)
+		case data.DownloadCompleteEvent:
+			s.handleDownloadCompleteEvent(v)
 		}
 	}
 }
 
-func (s *Session) acceptHandshake(conn net.Conn) error {
-	p := peer.New(conn, len(s.torrent.Pieces()))
-	err := p.Init()
+func (s *Session) loadTorrents() error {
+	torrents, err := btorrent.LoadDir(s.baseDir)
 	if err != nil {
 		return err
 	}
 
-	refhash := s.torrent.InfoHash()
-	if !bytes.Equal(p.InfoHash[:], refhash[:]) {
-		err := fmt.Errorf("Unknown info hash: %x %x", p.InfoHash, refhash)
-		return err
+	for _, t := range torrents {
+		s.register(*t, []data.Option{})
 	}
-
-	err = Handshake(p, s.torrent.InfoHash(), s.peerID, Reserved.ReservedBytes())
-	if err != nil {
-		return err
-	}
-
-	s.swarm.EventCh <- swarm.JoinEvent{Peer: p}
 
 	return nil
 }
 
-func New(cfg Config, t btorrent.Torrent) *Session {
-	var trackers []*tracker.TrackerGroup
+func (s *Session) Init() error {
+	ctx := context.Background()
+	s.startedAt = time.Now()
 
-	for _, tier := range t.AnnounceList() {
-		trackers = append(trackers, tracker.NewGroup(tier))
+	err := s.loadTorrents()
+	if err != nil {
+		return err
 	}
 
-	var (
-		dialCfg = peer.DialConfig{
-			InfoHash:   t.InfoHash(),
-			Timeout:    500 * time.Millisecond,
-			PeerID:     PeerID,
-			Extensions: Reserved,
-			PStr:       PStr,
+	err = s.conn.Init(ctx)
+	if err != nil {
+		return err
+	}
+
+	err = s.data.Init(ctx)
+	if err != nil {
+		return err
+	}
+
+	go s.handleEvents(ctx)
+	go s.checkSwarmHealth(ctx)
+	go s.heartbeat(ctx)
+
+	return nil
+}
+
+func (s *Session) register(t btorrent.Torrent, opts []data.Option) {
+	location := path.Join(s.baseDir, fmt.Sprintf("%s.torrent", t.HexHash()))
+
+	if _, err := os.Stat(location); errors.Is(err, os.ErrNotExist) {
+		err := btorrent.Save(location, &t)
+		if err != nil {
+			panic(err)
 		}
-		msgIn = make(chan interface{}, 32)
-		swarm = swarm.New(t, msgIn, trackers, dialCfg)
-	)
-
-	opts := []client.Option{}
-	if len(cfg.Files) > 0 {
-		opts = append(opts, client.WithFiles(cfg.Files...))
 	}
 
-	c := &Session{
-		baseDir:     cfg.BaseDir,
-		downloadDir: cfg.DownloadDir,
-		maxConns:    cfg.MaxConnections,
-		peerID:      PeerID,
-		port:        cfg.Port,
+	s.torrents[t.InfoHash()] = t
 
-		torrent:  t,
-		trackers: trackers,
+	s.conn.Register(t)
+	s.peers.Register(t)
+	s.data.Register(t, opts...)
+}
 
-		ip:     cfg.IP,
-		msgIn:  msgIn,
-		client: client.New(t, cfg.BaseDir, cfg.DownloadDir, opts...),
-		swarm:  &swarm,
+func (s *Session) Register(t btorrent.Torrent, opts ...data.Option) {
+	go func() {
+		s.EventsIn <- RegisterCmd{t: t, opts: opts}
+	}()
+}
+
+func (s *Session) checkSwarmHealth(ctx context.Context) {
+	for {
+		s.fillSwarms()
+		time.Sleep(5 * time.Second)
+	}
+}
+
+func (s *Session) heartbeat(ctx context.Context) {
+	ticker := time.NewTicker(2 * time.Second)
+	var lastInterval time.Time
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if time.Now().Sub(lastInterval) > 5*time.Second {
+				s.unchoke()
+				lastInterval = time.Now()
+			}
+
+			s.stat()
+		}
+	}
+}
+
+func (s *Session) fillSwarms() {
+	for hash, stat := range s.peers.Swarms() {
+		if stat.Peers < 10 {
+			want := 10 - stat.Peers
+			pInfo := s.peers.Discover(hash, 30)
+			cfg := peer.DialConfig{
+				PStr:       PStr,
+				InfoHash:   hash,
+				PeerID:     PeerID,
+				Extensions: Reserved,
+				Timeout:    500 * time.Millisecond,
+			}
+			for _, p := range pInfo {
+				if want == 0 {
+					return
+				}
+
+				addr := &net.TCPAddr{IP: p.IP, Port: int(p.Port)}
+				_, err := s.conn.Dial(addr, cfg)
+				if err != nil {
+					continue
+				}
+				want--
+			}
+		}
+	}
+}
+
+func clear() {
+	cmd := exec.Command("clear") //Linux example, its tested
+	cmd.Stdout = os.Stdout
+	cmd.Run()
+}
+
+func (s *Session) stat() {
+	for hash, torrent := range s.torrents {
+		var sb strings.Builder
+		fmt.Fprintln(&sb, torrent.Name())
+
+		clientStat := s.data.Stat(hash)
+		fmt.Fprintf(&sb, "State: %s\n", clientStat.State)
+		fmt.Fprintf(&sb, "Uploaded: %s\n", clientStat.Uploaded)
+		fmt.Fprintf(&sb, "Downloaded: %s / %s\n", min(clientStat.Downloaded, torrent.Length()), torrent.Length())
+		fmt.Fprintf(&sb, "Download rate: %s / s\n", clientStat.DownloadRate)
+		fmt.Fprintf(&sb, "Pending pieces: %d\n\n", clientStat.Pending)
+
+		for _, file := range clientStat.Files {
+			if file.Ignored {
+				continue
+			}
+
+			fmt.Fprintf(&sb, "%s (%s/%s)\n", file.Name, file.Downloaded, file.Size)
+		}
+
+		fmt.Fprintln(&sb, s.peers.Swarms()[hash])
+		clear()
+		fmt.Println(sb.String())
+	}
+}
+
+// Optimistic unchoke
+func (s *Session) unchoke() {
+	for hash, stat := range s.peers.Swarms() {
+		res := s.peers.Get(hash, peers.GetRequest{
+			Limit: 1,
+			Filter: func(p *peer.Peer) bool {
+				return p.Choked && p.Interested
+			},
+		})
+
+		for _, p := range res.Peers {
+			p.Send(peer.UnchokeMessage{})
+		}
+
+		if stat.Peers-stat.Choked >= 4 {
+			res := s.peers.Get(hash, peers.GetRequest{
+				Limit: 1,
+				Filter: func(p *peer.Peer) bool {
+					return !p.Choked
+				},
+			})
+
+			for _, p := range res.Peers {
+				p.Send(peer.ChokeMessage{})
+			}
+		}
+
+	}
+}
+
+func (s *Session) Pause(hash [20]byte) error {
+	s.EventsIn <- PauseCmd{Hash: hash}
+
+	return nil
+}
+
+func min(a, b btorrent.Size) btorrent.Size {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func New(cfg Config) *Session {
+	eventsIn := make(chan interface{}, 32)
+
+	var connCfg = conn.Config{
+		IP:             cfg.IP,
+		Port:           cfg.Port,
+		PeerID:         PeerID,
+		MaxConnections: cfg.MaxConnections,
+		PStr:           PStr,
+		Reserved:       Reserved,
+	}
+	connService := conn.NewService(connCfg, eventsIn)
+
+	var dataCfg = data.Config{
+		BaseDir:     cfg.BaseDir,
+		DownloadDir: cfg.DownloadDir,
+	}
+	dataService := data.NewService(dataCfg, eventsIn)
+
+	var peersCfg = peers.Config{
+		Port:   cfg.Port,
+		PeerID: PeerID,
+	}
+	peersService := peers.NewService(peersCfg, eventsIn)
+
+	s := &Session{
+		baseDir: cfg.BaseDir,
+
+		EventsIn: eventsIn,
+
+		torrents: make(map[[20]byte]btorrent.Torrent),
+
+		data:  dataService,
+		conn:  connService,
+		peers: peersService,
 	}
 
-	return c
+	return s
 }
