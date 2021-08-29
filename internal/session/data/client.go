@@ -316,8 +316,6 @@ func (c *Client) emit(e ClientEvent) {
 	case DownloadEvent:
 		c.Pending = v.Pending
 	}
-
-	c.emitCh <- e
 }
 
 // downloadPiece spawns a worker that manages requesting

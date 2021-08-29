@@ -72,188 +72,6 @@ func (s *Session) handleEvents(ctx context.Context) {
 	}
 }
 
-func (s *Session) handleCloseConn(ev conn.ConnCloseEvent) {
-	s.peers.Remove(ev.Hash, ev.Peer)
-}
-
-func (s *Session) handleDownloadCompleteEvent(ev data.DownloadCompleteEvent) {
-	res := s.peers.Get(ev.Hash, peers.GetRequest{})
-	for _, p := range res.Peers {
-		go p.Send(peer.HaveMessage{Index: uint32(ev.Index)})
-	}
-}
-
-func (s *Session) handleRequestMessage(msg data.RequestMessage) {
-	res := s.peers.Get(msg.Hash, peers.GetRequest{
-		Limit: 2,
-		Filter: func(p *peer.Peer) bool {
-			// TODO: OR FAST
-			return p.HasPiece(int(msg.Index)) &&
-				!p.Blocking &&
-				!p.IsServing(msg.Index, msg.Offset)
-		},
-	})
-
-	for _, p := range res.Peers {
-		go p.Send(msg.RequestMessage)
-	}
-}
-
-var pieceFreq = make(map[int]int)
-
-func (s *Session) handlePeerMessage(ev peers.MessageReceived) {
-	pieces, err := s.data.Pieces(ev.Hash)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-
-	switch msg := ev.Msg.(type) {
-	case peer.AllowedFastMessage:
-		// TODO: IMPLEMENT
-	case peer.BitFieldMessage:
-		t := s.torrents[ev.Hash]
-		for idx := range t.Pieces() {
-			if ev.Peer.HasPiece(idx) {
-				pieceFreq[idx]++
-			}
-
-			if !pieces.Get(idx) {
-				ev.Peer.Send(peer.InterestedMessage{})
-			}
-		}
-	case peer.HaveMessage:
-		pieceFreq[int(msg.Index)]++
-		if !pieces.Get(int(msg.Index)) {
-			ev.Peer.Send(peer.InterestedMessage{})
-		}
-	case peer.RequestMessage:
-		data, err := s.data.GetPiece(ev.Hash, msg)
-		if err != nil {
-			return
-		}
-
-		ev.Peer.Send(peer.PieceMessage{
-			Index:  msg.Index,
-			Offset: msg.Offset,
-			Piece:  data,
-		})
-	}
-}
-
-func (s *Session) fillSwarms() {
-	for hash, stat := range s.peers.Swarms() {
-		if stat.Peers < 10 {
-			want := 10 - stat.Peers
-			pInfo := s.peers.Discover(hash, 30)
-			cfg := peer.DialConfig{
-				PStr:       PStr,
-				InfoHash:   hash,
-				PeerID:     PeerID,
-				Extensions: Reserved,
-				Timeout:    500 * time.Millisecond,
-			}
-			for _, p := range pInfo {
-				if want == 0 {
-					return
-				}
-
-				addr := &net.TCPAddr{IP: p.IP, Port: int(p.Port)}
-				_, err := s.conn.Dial(addr, cfg)
-				if err != nil {
-					continue
-				}
-				want--
-			}
-		}
-	}
-}
-
-func (s *Session) handleNewConn(ev conn.NewConnEvent) {
-	p := ev.Peer
-	status, err := s.data.Status(ev.Hash)
-	if err != nil {
-		p.Close(err.Error())
-		return
-	}
-
-	if status == data.PAUSED || status == data.ERROR {
-		return
-	}
-
-	if status == data.STOPPED {
-		s.data.Init(context.Background())
-	}
-
-	err = s.data.AddDataStream(ev.Hash, p)
-	if err != nil {
-		p.Close(err.Error())
-		return
-	}
-
-	bitField, err := s.data.Pieces(ev.Hash)
-	if err != nil {
-		p.Close(err.Error())
-		return
-	}
-
-	s.peers.Add(ev.Hash, p)
-
-	if p.Extensions.IsEnabled(peer.EXT_FAST) {
-		s.sendAllowFast(ev.Hash, p)
-		s.sendAllowFastSet(ev.Hash, p)
-		return
-	}
-
-	p.Send(peer.BitFieldMessage{BitField: bitField})
-}
-
-func (s *Session) sendAllowFast(hash [20]byte, p *peer.Peer) {
-	var (
-		t         = s.torrents[hash]
-		pieces, _ = s.data.Pieces(hash)
-		haveN     = pieces.GetSum()
-	)
-
-	if haveN == len(t.Pieces()) {
-		p.Send(peer.HaveAllMessage{})
-		return
-	}
-
-	if haveN == 0 {
-		p.Send(peer.HaveNoneMessage{})
-		return
-	}
-
-	p.Send(peer.BitFieldMessage{BitField: pieces})
-}
-
-func (s *Session) sendAllowFastSet(hash [20]byte, p *peer.Peer) {
-	addr := p.RemoteAddr().(*net.TCPAddr)
-	t := s.torrents[hash]
-
-	for _, pieceIdx := range t.GenFastSet(addr.IP, 10) {
-		go p.Send(peer.AllowedFastMessage{Index: uint32(pieceIdx)})
-	}
-}
-
-func (s *Session) register(t btorrent.Torrent, opts []data.Option) {
-	location := path.Join(s.baseDir, fmt.Sprintf("%s.torrent", t.HexHash()))
-
-	if _, err := os.Stat(location); errors.Is(err, os.ErrNotExist) {
-		err := btorrent.Save(location, &t)
-		if err != nil {
-			panic(err)
-		}
-	}
-
-	s.torrents[t.InfoHash()] = t
-
-	s.conn.Register(t)
-	s.peers.Register(t)
-	s.data.Register(t, opts...)
-}
-
 func (s *Session) loadTorrents() error {
 	torrents, err := btorrent.LoadDir(s.baseDir)
 	if err != nil {
@@ -287,21 +105,45 @@ func (s *Session) Init() error {
 	}
 
 	go s.handleEvents(ctx)
+	go s.checkSwarmHealth(ctx)
 	go s.heartbeat(ctx)
 
 	return nil
 }
 
+func (s *Session) register(t btorrent.Torrent, opts []data.Option) {
+	location := path.Join(s.baseDir, fmt.Sprintf("%s.torrent", t.HexHash()))
+
+	if _, err := os.Stat(location); errors.Is(err, os.ErrNotExist) {
+		err := btorrent.Save(location, &t)
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	s.torrents[t.InfoHash()] = t
+
+	s.conn.Register(t)
+	s.peers.Register(t)
+	s.data.Register(t, opts...)
+}
+
+func (s *Session) Register(t btorrent.Torrent, opts ...data.Option) {
+	go func() {
+		s.EventsIn <- RegisterCmd{t: t, opts: opts}
+	}()
+}
+
+func (s *Session) checkSwarmHealth(ctx context.Context) {
+	for {
+		s.fillSwarms()
+		time.Sleep(5 * time.Second)
+	}
+}
+
 func (s *Session) heartbeat(ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	var lastInterval time.Time
-
-	go func() {
-		for {
-			s.fillSwarms()
-			time.Sleep(5 * time.Second)
-		}
-	}()
 
 	for {
 		select {
@@ -314,6 +156,34 @@ func (s *Session) heartbeat(ctx context.Context) {
 			}
 
 			s.stat()
+		}
+	}
+}
+
+func (s *Session) fillSwarms() {
+	for hash, stat := range s.peers.Swarms() {
+		if stat.Peers < 10 {
+			want := 10 - stat.Peers
+			pInfo := s.peers.Discover(hash, 30)
+			cfg := peer.DialConfig{
+				PStr:       PStr,
+				InfoHash:   hash,
+				PeerID:     PeerID,
+				Extensions: Reserved,
+				Timeout:    500 * time.Millisecond,
+			}
+			for _, p := range pInfo {
+				if want == 0 {
+					return
+				}
+
+				addr := &net.TCPAddr{IP: p.IP, Port: int(p.Port)}
+				_, err := s.conn.Dial(addr, cfg)
+				if err != nil {
+					continue
+				}
+				want--
+			}
 		}
 	}
 }
@@ -338,16 +208,7 @@ func (s *Session) stat() {
 		}
 
 		fmt.Println(s.peers.Swarms()[hash])
-
 	}
-
-}
-
-func min(a, b btorrent.Size) btorrent.Size {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // Optimistic unchoke
@@ -386,10 +247,11 @@ func (s *Session) Pause(hash [20]byte) error {
 	return nil
 }
 
-func (s *Session) Register(t btorrent.Torrent, opts ...data.Option) {
-	go func() {
-		s.EventsIn <- RegisterCmd{t: t, opts: opts}
-	}()
+func min(a, b btorrent.Size) btorrent.Size {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func New(cfg Config) *Session {
