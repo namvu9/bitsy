@@ -19,8 +19,8 @@ type Peer struct {
 	closed   bool
 	InfoHash [20]byte
 
-	Msg chan Message
-	//Out chan Event
+	Msg        chan Message
+	DataStream chan PieceMessage
 
 	// This peer has choked the client and should not be
 	// be asked for pieces
@@ -72,7 +72,11 @@ func (p *Peer) IDStr() string {
 	return fmt.Sprintf("%x", p.ID[8:])
 }
 
-func (p *Peer) Close() error {
+func (p *Peer) Close(reason string) error {
+	if p == nil {
+		return nil
+	}
+
 	for _, fn := range p.onClose {
 		fn(p)
 	}
@@ -100,6 +104,9 @@ func (p *Peer) Send(msg Message) error {
 	case ChokeMessage:
 		p.Choked = true
 	case InterestedMessage:
+		if p.Interesting {
+			return nil
+		}
 		p.Interesting = true
 	case NotInterestedMessage:
 		p.Interesting = false
@@ -107,7 +114,7 @@ func (p *Peer) Send(msg Message) error {
 
 	_, err := p.write(msg.Bytes())
 	if err != nil {
-		p.Close()
+		p.Close(err.Error())
 		return err
 	}
 
@@ -141,12 +148,13 @@ func (p *Peer) Listen(ctx context.Context) {
 		select {
 		case <-ticker.C:
 			if p.Idle() {
-				p.Close()
+				fmt.Println("IDLE")
+				p.Close("IDLE")
 				return
 			}
 
 		case <-ctx.Done():
-			p.Close()
+			p.Close("DONE")
 			return
 		default:
 		}
@@ -155,12 +163,12 @@ func (p *Peer) Listen(ctx context.Context) {
 		p.LastMessageReceived = time.Now()
 
 		if err != nil && errors.IsEOF(err) {
-			p.Close()
+			p.Close(err.Error())
 			return
 		}
 
 		if err != nil {
-			p.Close()
+			p.Close(err.Error())
 			return
 		}
 
@@ -169,6 +177,7 @@ func (p *Peer) Listen(ctx context.Context) {
 			p.Pieces.Set(int(v.Index))
 		case PieceMessage:
 			p.Uploaded += int64(len(v.Piece))
+			p.DataStream <- v
 		case ChokeMessage:
 			p.Blocking = true
 			p.requests = make([]RequestMessage, 0)
@@ -184,10 +193,7 @@ func (p *Peer) Listen(ctx context.Context) {
 		case HaveAllMessage:
 			p.Pieces = bits.Ones(len(p.Pieces))
 		case *ExtHandshakeMsg:
-			err := p.handleExtHandshakeMsg(v)
-			if err != nil {
-				fmt.Println("Listen.*ExtHandshakeMessage", err)
-			}
+			p.handleExtHandshakeMsg(v)
 		}
 
 		p.Msg <- msg
@@ -231,6 +237,10 @@ func (p *Peer) Init() error {
 	return nil
 }
 
+func (p *Peer) Is(other *Peer) bool {
+	return p.RemoteAddr() == other.RemoteAddr()
+}
+
 func New(c net.Conn) *Peer {
 	peer := &Peer{
 		Conn:                c,
@@ -239,6 +249,7 @@ func New(c net.Conn) *Peer {
 		LastMessageReceived: time.Now(),
 		LastMessageSent:     time.Now(),
 		Msg:                 make(chan Message, 32),
+		DataStream:          make(chan PieceMessage, 32),
 	}
 	return peer
 }

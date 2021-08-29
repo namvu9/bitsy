@@ -1,10 +1,9 @@
-package client
+package data
 
 import (
 	"context"
 	"fmt"
 	"math/rand"
-	"net"
 	"os"
 	"path"
 	"regexp"
@@ -16,8 +15,6 @@ import (
 	"github.com/namvu9/bitsy/pkg/bits"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
-	"github.com/namvu9/bitsy/pkg/btorrent/swarm"
-	"github.com/namvu9/bitsy/pkg/ch"
 )
 
 type ClientState int
@@ -26,6 +23,7 @@ const MAX_PENDING_PIECES = 100
 
 const (
 	STOPPED ClientState = iota
+	PAUSED
 	STARTING
 	DOWNLOADING
 	DONE
@@ -89,12 +87,16 @@ type Client struct {
 	workerLock sync.RWMutex
 }
 
-func (c *Client) Stop() {
+func (c *Client) Stop() error {
 	c.doneCh <- struct{}{}
 	c.emit(StateChange{To: STOPPED})
+	return nil
 }
 
 func (c *Client) Start(ctx context.Context) error {
+	if c.state == DOWNLOADING || c.state == SEEDING {
+		return nil
+	}
 	c.emit(StateChange{To: STARTING})
 
 	if err := c.verifyPieces(); err != nil {
@@ -108,9 +110,13 @@ func (c *Client) Start(ctx context.Context) error {
 			c.filesWritten[file.Name] = true
 		}
 	}
-	c.assembleTorrent(path.Join(c.outDir, c.torrent.Name()))
 
-	ch.PipeFn(ctx, c.handleEvent, c.emitCh, c.StateCh)
+	err := c.assembleTorrent(path.Join(c.outDir, c.torrent.Name()))
+	if err != nil {
+		fmt.Println("ERR", err)
+		return err
+	}
+
 	go c.listen()
 
 	if !c.done() {
@@ -124,7 +130,6 @@ func (c *Client) Start(ctx context.Context) error {
 }
 
 // TODO: TEST
-// This sometimes blocks the program...
 func (c *Client) nextNPieces(n int, exclude map[int]*worker) []int {
 	var remaining []int
 	c.workerLock.RLock()
@@ -156,6 +161,31 @@ func (c *Client) nextNPieces(n int, exclude map[int]*worker) []int {
 	return out
 }
 
+func (c *Client) clearCompletedPieces() {
+	count := 0
+
+	var out []DownloadCompleteEvent
+	for idx, w := range c.workers {
+		if w.isComplete() {
+			delete(c.workers, idx)
+			c.pieces.Set(idx)
+			out = append(out, DownloadCompleteEvent{
+				Index: idx,
+				Hash:  c.torrent.InfoHash(),
+			})
+			count++
+		}
+	}
+
+	if len(c.workers) < 50 {
+		c.downloadN(10)
+	}
+
+	for _, ev := range out {
+		c.MsgOut <- ev
+	}
+}
+
 func (c *Client) download() {
 	var (
 		ticker       = time.NewTicker(2 * time.Second)
@@ -178,41 +208,14 @@ func (c *Client) download() {
 				continue
 			}
 
-			if done {
-				c.emit(DownloadCompleteEvent{
-					Index:        int(msg.Index),
-					DownloadRate: btorrent.Size(downloadRate),
-					Pending:      len(c.workers),
-				})
-				c.workerLock.Lock()
-				delete(c.workers, int(msg.Index))
-				c.workerLock.Unlock()
-			}
-			c.assembleTorrent(path.Join(c.outDir, c.torrent.Name()))
-
-			if c.done() {
-				c.emit(StateChange{To: SEEDING})
-				return
-			}
-
-			if len(c.workers) < MAX_PENDING_PIECES {
-				c.downloadN(1)
-			}
-
 		case <-ticker.C:
-			go c.unchoke()
-			go c.choke()
+			c.clearCompletedPieces()
 
 			downloadRate = float64(batch) / 2.0
 
-			go c.emit(DownloadCompleteEvent{
-				Index:        int(-1),
-				DownloadRate: btorrent.Size(downloadRate),
-				Pending:      len(c.workers),
-			})
 			batch = 0
 
-			idleCount := 0
+			var idleCount int
 			for _, w := range c.workers {
 				if w.idle() {
 					idleCount++
@@ -220,7 +223,18 @@ func (c *Client) download() {
 				}
 			}
 
-			if idleCount > 0 && len(c.workers) < MAX_PENDING_PIECES {
+			err := c.assembleTorrent(path.Join(c.outDir, c.torrent.Name()))
+			if err != nil {
+				fmt.Println("ERR ASSEMBLING", err)
+			}
+
+			if c.done() {
+				c.emit(StateChange{To: SEEDING})
+			}
+
+			c.DownloadRate = btorrent.Size(downloadRate)
+
+			if idleCount > 0 {
 				c.downloadN(1)
 			}
 		}
@@ -260,50 +274,8 @@ func (c *Client) done() bool {
 
 func (c *Client) downloadN(n int) {
 	for _, pieceIdx := range c.nextNPieces(n, c.workers) {
-		go c.downloadPiece(uint32(pieceIdx), false)
-		go c.emit(DownloadEvent{
-			Pending: len(c.workers),
-		})
+		c.downloadPiece(uint32(pieceIdx), false)
 	}
-}
-
-func (c *Client) unchoke() {
-	// Optimistic unchoke
-	c.MsgOut <- swarm.MulticastMessage{
-		Limit: 2,
-		Filter: func(p *peer.Peer) bool {
-			return p.Choked
-		},
-		Handler: func(p []*peer.Peer) {
-			if len(p) == 0 {
-				return
-			}
-			last := p[len(p)-1]
-			last.Send(peer.UnchokeMessage{})
-		},
-	}
-}
-
-func (c *Client) choke() {
-	// Choke the "worst" peer
-	c.MsgOut <- swarm.MulticastMessage{
-		OrderBy: func(p1, p2 *peer.Peer) int {
-			// Rank peers by upload rate
-			return int(p2.UploadRate - p1.UploadRate)
-		},
-		Limit: 5,
-		Filter: func(p *peer.Peer) bool {
-			return !p.Choked
-		},
-		Handler: func(p []*peer.Peer) {
-			if len(p) == 0 {
-				return
-			}
-			last := p[len(p)-1]
-			last.Send(peer.ChokeMessage{})
-		},
-	}
-
 }
 
 func (c *Client) listen() {
@@ -311,31 +283,6 @@ func (c *Client) listen() {
 		select {
 		case <-c.doneCh:
 			return
-		case msg := <-c.SwarmCh:
-			switch v := msg.(type) {
-			case swarm.JoinEvent:
-				p := v.Peer
-				var haveMsg peer.Message
-				var haveN = c.pieces.GetSum()
-
-				if p.Extensions.IsEnabled(peer.EXT_FAST) && haveN == len(c.torrent.Pieces()) {
-					haveMsg = peer.HaveAllMessage{}
-				} else if p.Extensions.IsEnabled(peer.EXT_FAST) && haveN == 0 {
-					haveMsg = peer.HaveNoneMessage{}
-				} else {
-					haveMsg = peer.BitFieldMessage{BitField: c.pieces}
-				}
-				go p.Send(haveMsg)
-				addr := p.RemoteAddr().(*net.TCPAddr)
-
-				if p.Extensions.IsEnabled(peer.EXT_FAST) {
-					for _, pieceIdx := range c.torrent.GenFastSet(addr.IP, 10) {
-						go p.Send(peer.AllowedFastMessage{Index: uint32(pieceIdx)})
-					}
-				}
-
-				c.subscribe(p)
-			}
 		case msg := <-c.MsgIn:
 			c.handleMessage(msg)
 		}
@@ -355,26 +302,18 @@ type DownloadEvent struct {
 type UploadEvent struct{}
 
 type DownloadCompleteEvent struct {
-	Index        int
-	DownloadRate btorrent.Size
-	Pending      int
+	Hash  InfoHash
+	Index int
 }
 
-func (c *Client) handleEvent(e interface{}) interface{} {
+func (c *Client) emit(e ClientEvent) {
 	switch v := e.(type) {
 	case StateChange:
 		c.state = v.To
-	case DownloadCompleteEvent:
-		c.DownloadRate = v.DownloadRate
-		c.Pending = v.Pending
 	case DownloadEvent:
 		c.Pending = v.Pending
 	}
 
-	return c.Stat()
-}
-
-func (c *Client) emit(e ClientEvent) {
 	c.emitCh <- e
 }
 
@@ -382,9 +321,6 @@ func (c *Client) emit(e ClientEvent) {
 // subpieces from peers and will retransmit requests if the
 // download begins to stall
 func (c *Client) downloadPiece(index uint32, fast bool) *worker {
-	c.workerLock.Lock()
-	defer c.workerLock.Unlock()
-
 	if _, ok := c.workers[int(index)]; ok || c.ignoredPieces.Get(int(index)) {
 		return nil
 	}
@@ -509,7 +445,7 @@ func WithFiles(fileIdx ...int) Option {
 	}
 }
 
-func New(t btorrent.Torrent, baseDir, outDir string, options ...Option) *Client {
+func New(t btorrent.Torrent, baseDir, outDir string, emitter chan interface{}, options ...Option) *Client {
 	nPieces := len(t.Pieces())
 	c := &Client{
 		baseDir:       baseDir,
@@ -519,8 +455,9 @@ func New(t btorrent.Torrent, baseDir, outDir string, options ...Option) *Client 
 		emitCh:        make(chan interface{}, 32),
 		MsgIn:         make(chan messageReceived, 32),
 		DataIn:        make(chan peer.PieceMessage, 32),
-		MsgOut:        make(chan interface{}, 32),
+		MsgOut:        emitter,
 		SwarmCh:       make(chan interface{}, 32),
+		doneCh:        make(chan struct{}),
 		filesWritten:  make(map[string]bool),
 		torrent:       t,
 		ignoredPieces: bits.NewBitField(nPieces),

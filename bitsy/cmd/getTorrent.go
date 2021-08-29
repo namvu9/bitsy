@@ -50,11 +50,11 @@ func withTimeout(ctx context.Context, timeout time.Duration) (context.Context, f
 var getTorrentCmd = &cobra.Command{
 	Use:   "getTorrent <magnet url>",
 	Short: "Convert a magnet url to a torrent file",
-	Long:  `Example:
+	Long: `Example:
 
 bitsy getTorrent <magnetURL> > out.torrent
 `,
-	Args:  cobra.ExactArgs(1),
+	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx, cancel := withTimeout(context.Background(), 60*time.Second)
 		defer cancel()
@@ -75,7 +75,10 @@ bitsy getTorrent <magnetURL> > out.torrent
 			start = time.Now()
 		)
 
-		t, _ = getMeta(ctx, t, 6881)
+		t, err = getMeta(ctx, t, 6881)
+		if err != nil {
+			panic(err)
+		}
 
 		out := cmd.Flag("out")
 		if out != nil && out.Value.String() != "" {
@@ -106,6 +109,7 @@ func foo(ctx context.Context, t btorrent.Torrent, peers []net.Addr) (*btorrent.T
 }
 
 func getMeta(ctx context.Context, t *btorrent.Torrent, port uint16) (*btorrent.Torrent, error) {
+	os.Stderr.WriteString(fmt.Sprintf("GET META %d\n", port))
 	res := make(chan btorrent.Torrent)
 	go func() {
 	start:
@@ -182,7 +186,7 @@ func announce(ctx context.Context, t *btorrent.Torrent, port uint16) chan tracke
 					res := tracker.AnnounceS(ctx, urls, req)
 					for {
 						select {
-						case r, ok := <- res:
+						case r, ok := <-res:
 							if !ok {
 								return
 							}

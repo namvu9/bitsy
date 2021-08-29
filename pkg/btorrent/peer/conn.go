@@ -49,6 +49,8 @@ func Dial(ctx context.Context, addr net.Addr, cfg DialConfig) (*Peer, error) {
 		return nil, err
 	}
 
+	go p.Listen(ctx)
+
 	return p, nil
 }
 

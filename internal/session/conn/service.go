@@ -1,4 +1,4 @@
-package session
+package conn
 
 import (
 	"context"
@@ -10,12 +10,10 @@ import (
 	"github.com/namvu9/bitsy/pkg/bits"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
-	"github.com/namvu9/bitsy/pkg/btorrent/swarm"
-	"gitlab.com/NebulousLabs/go-upnp"
 )
 
-type ConnectionService interface {
-	Call(net.Addr, btorrent.Torrent) (*peer.Peer, error)
+type Service interface {
+	Dial(net.Addr, peer.DialConfig) (*peer.Peer, error)
 	Register(btorrent.Torrent)
 	Unregister(btorrent.Torrent)
 
@@ -25,12 +23,44 @@ type ConnectionService interface {
 type connectionService struct {
 	torrents map[[20]byte]btorrent.Torrent
 	port     uint16
+	ip       string
 	peerID   [20]byte
-	emit     func(interface{})
+	emitter  chan<- interface{}
 	conns    chan struct{}
+
+	Reserved *peer.Extensions
+	pstr     string
 }
 
-func (cs *connectionService) Call(net.Addr, btorrent.Torrent) (*peer.Peer, error) {
+func (cs *connectionService) Dial(addr net.Addr, cfg peer.DialConfig) (*peer.Peer, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	p, err := peer.Dial(ctx, addr, cfg)
+	if err != nil {
+		return nil, err
+	}
+	p.OnClose(func(p *peer.Peer) {
+		if len(cs.conns) == 0 {
+			return
+		}
+		cs.emitter <- ConnCloseEvent{
+			Peer: p,
+			Hash: cfg.InfoHash,
+		}
+		<-cs.conns
+	})
+
+	select {
+	case cs.conns <- struct{}{}:
+	default:
+		err := fmt.Errorf("exceeded max conns")
+		p.Close(err.Error())
+		return nil, err
+	}
+
+	go p.Listen(context.Background())
+
+	cs.emitter <- NewConnEvent{Peer: p, Hash: cfg.InfoHash}
 	return nil, nil
 }
 func (cs *connectionService) Register(t btorrent.Torrent) {
@@ -41,7 +71,8 @@ func (cs *connectionService) Unregister(t btorrent.Torrent) {
 	delete(cs.torrents, t.InfoHash())
 }
 func (cs *connectionService) Init(ctx context.Context) error {
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", cs.port))
+	addr := fmt.Sprintf("%s:%d", cs.ip, cs.port)
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
@@ -51,19 +82,16 @@ func (cs *connectionService) Init(ctx context.Context) error {
 			conn, err := listener.Accept()
 			if err != nil {
 				err = errors.Wrap(err)
-				fmt.Println(err)
 				continue
 			}
 
 			err = cs.acceptHandshake(conn)
 			if err != nil {
 				conn.Close()
-				fmt.Println(err)
 				continue
 			}
 
 			cs.conns <- struct{}{}
-			fmt.Println("CONNS", len(cs.conns))
 		}
 	}()
 
@@ -80,35 +108,44 @@ func (cs *connectionService) acceptHandshake(conn net.Conn) error {
 	torrent, ok := cs.torrents[p.InfoHash]
 	if !ok {
 		err := fmt.Errorf("Unknown info hash: %x", p.InfoHash)
-		fmt.Println(err)
 		return err
 	}
 
 	p.Pieces = bits.NewBitField(len(torrent.Pieces()))
 
-	err = Handshake(p, torrent.InfoHash(), cs.peerID, Reserved.ReservedBytes())
+	err = Handshake(p, torrent.InfoHash(), cs.peerID, cs.Reserved.ReservedBytes(), cs.pstr)
 	if err != nil {
 		return err
 	}
 
 	p.OnClose(func(p *peer.Peer) {
+		if len(cs.conns) == 0 {
+			return
+		}
+		cs.emitter <- ConnCloseEvent{
+			Peer: p,
+			Hash: torrent.InfoHash(),
+		}
 		<-cs.conns
-		fmt.Println("CONNS", len(cs.conns))
 	})
 
 	go p.Listen(context.Background())
-	cs.emit(swarm.JoinEvent{Peer: p, Hash: torrent.InfoHash()})
+	cs.emitter <- NewConnEvent{Peer: p, Hash: torrent.InfoHash()}
 
 	return nil
 }
 
-func NewConnectionService(port uint16, peerID [20]byte, emitter func(interface{}), max int) ConnectionService {
+func NewService(ip string, port uint16, peerID [20]byte, emitter chan<- interface{}, max int, pstr string, Reserved *peer.Extensions) Service {
 	return &connectionService{
 		torrents: make(map[[20]byte]btorrent.Torrent),
 		conns:    make(chan struct{}, max),
+		ip:       ip,
 		port:     port,
 		peerID:   peerID,
-		emit:     emitter,
+		emitter:  emitter,
+
+		Reserved: Reserved,
+		pstr:     pstr,
 	}
 }
 
@@ -117,32 +154,9 @@ type upnpRes struct {
 	port       int
 }
 
-func ForwardPorts(from, to uint16) (uint16, error) {
-	var op errors.Op = "client.forwardPorts"
-
-	// Discover UPnP-supporting routers
-	d, err := upnp.Discover()
-	if err != nil {
-		return 0, errors.Wrap(err, op, errors.Network)
-	}
-
-	// forward a port
-	for port := from; port <= to; port++ {
-		err = d.Forward(port, "Bitsy BitTorrent client")
-		if err != nil {
-			continue
-		}
-
-		return port, err
-	}
-
-	err = fmt.Errorf("could not forward any of the specified ports")
-	return 0, errors.Wrap(err, op, errors.Network)
-}
-
 // Handshake attempts to perform a handshake with the given
 // client at addr with infoHash.
-func Handshake(conn net.Conn, infoHash [20]byte, peerID [20]byte, reserved [8]byte) error {
+func Handshake(p *peer.Peer, infoHash [20]byte, peerID [20]byte, reserved [8]byte, PStr string) error {
 	msg := peer.HandshakeMessage{
 		PStr:     PStr,
 		PStrLen:  byte(len(PStr)),
@@ -151,8 +165,8 @@ func Handshake(conn net.Conn, infoHash [20]byte, peerID [20]byte, reserved [8]by
 		Reserved: reserved,
 	}
 
-	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-	_, err := conn.Write(msg.Bytes())
+	p.Conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	_, err := p.Conn.Write(msg.Bytes())
 	if err != nil {
 		return err
 	}
