@@ -7,7 +7,9 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"os/exec"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/namvu9/bitsy/internal/session/conn"
@@ -188,26 +190,35 @@ func (s *Session) fillSwarms() {
 	}
 }
 
+func clear() {
+	cmd := exec.Command("clear") //Linux example, its tested
+	cmd.Stdout = os.Stdout
+	cmd.Run()
+}
+
 func (s *Session) stat() {
 	for hash, torrent := range s.torrents {
-		fmt.Println(torrent.Name())
+		var sb strings.Builder
+		fmt.Fprintln(&sb, torrent.Name())
 
 		clientStat := s.data.Stat(hash)
-		fmt.Printf("State: %s\n", clientStat.State)
-		fmt.Printf("Uploaded: %s\n", clientStat.Uploaded)
-		fmt.Printf("Downloaded: %s / %s\n", min(clientStat.Downloaded, torrent.Length()), torrent.Length())
-		fmt.Printf("Download rate: %s / s\n", clientStat.DownloadRate)
-		fmt.Printf("Pending pieces: %d\n", clientStat.Pending)
+		fmt.Fprintf(&sb, "State: %s\n", clientStat.State)
+		fmt.Fprintf(&sb, "Uploaded: %s\n", clientStat.Uploaded)
+		fmt.Fprintf(&sb, "Downloaded: %s / %s\n", min(clientStat.Downloaded, torrent.Length()), torrent.Length())
+		fmt.Fprintf(&sb, "Download rate: %s / s\n", clientStat.DownloadRate)
+		fmt.Fprintf(&sb, "Pending pieces: %d\n\n", clientStat.Pending)
 
 		for _, file := range clientStat.Files {
 			if file.Ignored {
 				continue
 			}
 
-			fmt.Printf("%s (%s/%s)\n", file.Name, file.Downloaded, file.Size)
+			fmt.Fprintf(&sb, "%s (%s/%s)\n", file.Name, file.Downloaded, file.Size)
 		}
 
-		fmt.Println(s.peers.Swarms()[hash])
+		fmt.Fprintln(&sb, s.peers.Swarms()[hash])
+		clear()
+		fmt.Println(sb.String())
 	}
 }
 

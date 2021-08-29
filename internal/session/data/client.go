@@ -197,7 +197,7 @@ func (c *Client) download() {
 
 			if done {
 				if len(c.workers) < 50 {
-					c.downloadN(1)
+					c.downloadN(5)
 				}
 				continue
 			}
@@ -207,17 +207,15 @@ func (c *Client) download() {
 		case <-ticker.C:
 			c.clearCompletedPieces()
 			if len(c.workers) < 50 {
-				c.downloadN(1)
+				c.downloadN(2)
 			}
 
 			downloadRate = float64(batch) / 2.0
 
 			batch = 0
 
-			var idleCount int
 			for _, w := range c.workers {
 				if w.idle() {
-					idleCount++
 					go w.restart()
 				}
 			}
@@ -232,10 +230,6 @@ func (c *Client) download() {
 			}
 
 			c.DownloadRate = btorrent.Size(downloadRate)
-
-			if idleCount > 0 {
-				c.downloadN(1)
-			}
 		}
 	}
 }
