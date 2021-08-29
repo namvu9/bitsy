@@ -41,11 +41,8 @@ func init() {
 type Session struct {
 	startedAt time.Time
 
-	// Config
 	baseDir  string
-	peerID   [20]byte
-	port     uint16 // the port to listen on
-	cmd      chan interface{}
+	EventsIn chan interface{}
 	torrents map[[20]byte]btorrent.Torrent
 
 	data  data.Service
@@ -55,8 +52,8 @@ type Session struct {
 
 func (s *Session) handleEvents(ctx context.Context) {
 	for {
-		cmd := <-s.cmd
-		switch v := cmd.(type) {
+		event := <-s.EventsIn
+		switch v := event.(type) {
 		case PauseCmd:
 			s.data.Stop(v.Hash)
 		case RegisterCmd:
@@ -90,7 +87,7 @@ func (s *Session) handleRequestMessage(msg data.RequestMessage) {
 	res := s.peers.Get(msg.Hash, peers.GetRequest{
 		Limit: 2,
 		Filter: func(p *peer.Peer) bool {
-			// OR FAST
+			// TODO: OR FAST
 			return p.HasPiece(int(msg.Index)) &&
 				!p.Blocking &&
 				!p.IsServing(msg.Index, msg.Offset)
@@ -201,27 +198,42 @@ func (s *Session) handleNewConn(ev conn.NewConnEvent) {
 	}
 
 	s.peers.Add(ev.Hash, p)
-	p.Send(peer.BitFieldMessage{BitField: bitField})
-
-	pieces, _ := s.data.Pieces(ev.Hash)
-	var haveMsg peer.Message
-	var haveN = pieces.GetSum()
-
-	t := s.torrents[ev.Hash]
-	if p.Extensions.IsEnabled(peer.EXT_FAST) && haveN == len(t.Pieces()) {
-		haveMsg = peer.HaveAllMessage{}
-	} else if p.Extensions.IsEnabled(peer.EXT_FAST) && haveN == 0 {
-		haveMsg = peer.HaveNoneMessage{}
-	} else {
-		haveMsg = peer.BitFieldMessage{BitField: pieces}
-	}
-	go p.Send(haveMsg)
-	addr := p.RemoteAddr().(*net.TCPAddr)
 
 	if p.Extensions.IsEnabled(peer.EXT_FAST) {
-		for _, pieceIdx := range t.GenFastSet(addr.IP, 10) {
-			go p.Send(peer.AllowedFastMessage{Index: uint32(pieceIdx)})
-		}
+		s.sendAllowFast(ev.Hash, p)
+		s.sendAllowFastSet(ev.Hash, p)
+		return
+	}
+
+	p.Send(peer.BitFieldMessage{BitField: bitField})
+}
+
+func (s *Session) sendAllowFast(hash [20]byte, p *peer.Peer) {
+	var (
+		t         = s.torrents[hash]
+		pieces, _ = s.data.Pieces(hash)
+		haveN     = pieces.GetSum()
+	)
+
+	if haveN == len(t.Pieces()) {
+		p.Send(peer.HaveAllMessage{})
+		return
+	}
+
+	if haveN == 0 {
+		p.Send(peer.HaveNoneMessage{})
+		return
+	}
+
+	p.Send(peer.BitFieldMessage{BitField: pieces})
+}
+
+func (s *Session) sendAllowFastSet(hash [20]byte, p *peer.Peer) {
+	addr := p.RemoteAddr().(*net.TCPAddr)
+	t := s.torrents[hash]
+
+	for _, pieceIdx := range t.GenFastSet(addr.IP, 10) {
+		go p.Send(peer.AllowedFastMessage{Index: uint32(pieceIdx)})
 	}
 }
 
@@ -369,33 +381,52 @@ func (s *Session) unchoke() {
 }
 
 func (s *Session) Pause(hash [20]byte) error {
-	s.cmd <- PauseCmd{Hash: hash}
+	s.EventsIn <- PauseCmd{Hash: hash}
 
 	return nil
 }
 
 func (s *Session) Register(t btorrent.Torrent, opts ...data.Option) {
 	go func() {
-		s.cmd <- RegisterCmd{t: t, opts: opts}
+		s.EventsIn <- RegisterCmd{t: t, opts: opts}
 	}()
 }
 
 func New(cfg Config) *Session {
-	cmd := make(chan interface{}, 32)
+	eventsIn := make(chan interface{}, 32)
+
+	var connCfg = conn.Config{
+		IP:             cfg.IP,
+		Port:           cfg.Port,
+		PeerID:         PeerID,
+		MaxConnections: cfg.MaxConnections,
+		PStr:           PStr,
+		Reserved:       Reserved,
+	}
+	connService := conn.NewService(connCfg, eventsIn)
+
+	var dataCfg = data.Config{
+		BaseDir:     cfg.BaseDir,
+		DownloadDir: cfg.DownloadDir,
+	}
+	dataService := data.NewService(dataCfg, eventsIn)
+
+	var peersCfg = peers.Config{
+		Port:   cfg.Port,
+		PeerID: PeerID,
+	}
+	peersService := peers.NewService(peersCfg, eventsIn)
 
 	s := &Session{
-		peerID: PeerID,
-
-		port:    cfg.Port,
 		baseDir: cfg.BaseDir,
 
-		cmd: cmd,
+		EventsIn: eventsIn,
 
 		torrents: make(map[[20]byte]btorrent.Torrent),
 
-		data:  data.NewService(cfg.BaseDir, cfg.DownloadDir, cmd),
-		conn:  conn.NewService(cfg.IP, cfg.Port, PeerID, cmd, cfg.MaxConnections, PStr, Reserved),
-		peers: peers.NewService(cmd, cfg.Port, PeerID),
+		data:  dataService,
+		conn:  connService,
+		peers: peersService,
 	}
 
 	return s

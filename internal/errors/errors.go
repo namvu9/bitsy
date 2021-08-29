@@ -1,3 +1,4 @@
+// TODO: Split into service-specific errors
 package errors
 
 import (

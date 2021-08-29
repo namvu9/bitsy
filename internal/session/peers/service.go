@@ -154,13 +154,18 @@ func (service *peerService) Discover(hash InfoHash, limit int) []tracker.PeerInf
 	return out
 }
 
-func NewService(emitter chan interface{}, port uint16, peerID [20]byte) Service {
+type Config struct {
+	Port   uint16
+	PeerID [20]byte
+}
+
+func NewService(cfg Config, emitter chan interface{}) Service {
 	return &peerService{
 		trackers: make(map[InfoHash][]*tracker.TrackerGroup),
 		peers:    make(map[InfoHash]map[string]*peer.Peer),
 		emitter:  emitter,
-		port:     port,
-		peerID:   peerID,
+		port:     cfg.Port,
+		peerID:   cfg.PeerID,
 	}
 }
 

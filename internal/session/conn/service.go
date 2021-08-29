@@ -135,17 +135,26 @@ func (cs *connectionService) acceptHandshake(conn net.Conn) error {
 	return nil
 }
 
-func NewService(ip string, port uint16, peerID [20]byte, emitter chan<- interface{}, max int, pstr string, Reserved *peer.Extensions) Service {
+type Config struct {
+	IP             string
+	Port           uint16
+	PeerID         [20]byte
+	PStr           string
+	Reserved       *peer.Extensions
+	MaxConnections int
+}
+
+func NewService(cfg Config, emitter chan<- interface{}) Service {
 	return &connectionService{
 		torrents: make(map[[20]byte]btorrent.Torrent),
-		conns:    make(chan struct{}, max),
-		ip:       ip,
-		port:     port,
-		peerID:   peerID,
+		conns:    make(chan struct{}, cfg.MaxConnections),
+		ip:       cfg.IP,
+		port:     cfg.Port,
+		peerID:   cfg.PeerID,
 		emitter:  emitter,
 
-		Reserved: Reserved,
-		pstr:     pstr,
+		Reserved: cfg.Reserved,
+		pstr:     cfg.PStr,
 	}
 }
 

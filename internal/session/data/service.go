@@ -135,13 +135,18 @@ func (ds *dataService) SetPriority(hash InfoHash, ranks []int) error {
 	return nil
 }
 
-func NewService(baseDir, downloadDir string, emitter chan interface{}) Service {
+type Config struct {
+	BaseDir     string
+	DownloadDir string
+}
+
+func NewService(cfg Config, emitter chan interface{}) Service {
 	return &dataService{
 		clients:     make(map[InfoHash]*Client),
 		torrents:    make(map[InfoHash]btorrent.Torrent),
 		ranks:       make(map[InfoHash][]int),
-		baseDir:     baseDir,
-		downloadDir: downloadDir,
+		baseDir:     cfg.BaseDir,
+		downloadDir: cfg.DownloadDir,
 		emitter:     emitter,
 	}
 }
