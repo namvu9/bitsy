@@ -69,6 +69,15 @@ func (s *Session) handlePeerMessage(ev peers.MessageReceived) {
 	case peer.RequestMessage:
 		data, err := s.data.GetPiece(ev.Hash, msg)
 		if err != nil {
+			fmt.Println(err)
+			p := ev.Peer
+			if p.Extensions.IsEnabled(peer.EXT_FAST) {
+				p.Send(peer.RejectRequestMessage{
+					Index:  msg.Index,
+					Offset: msg.Offset,
+					Length: msg.Length,
+				})
+			}
 			return
 		}
 
@@ -147,4 +156,3 @@ func (s *Session) sendAllowFastSet(hash [20]byte, p *peer.Peer) {
 		go p.Send(peer.AllowedFastMessage{Index: uint32(pieceIdx)})
 	}
 }
-

@@ -56,17 +56,9 @@ func (c *Client) handleAllowedFastMessage(msg peer.AllowedFastMessage, p *peer.P
 }
 
 func (c *Client) handleRequestMessage(req peer.RequestMessage) ([]byte, error) {
-	//if !c.pieces.Get(int(req.Index)) {
-	//if p.Extensions.IsEnabled(peer.EXT_FAST) {
-	//p.Send(peer.RejectRequestMessage{
-	//Index:  req.Index,
-	//Offset: req.Offset,
-	//Length: req.Length,
-	//})
-	//}
-
-	//return []byte{}, fmt.Errorf("Client does not have requested piece %d", req.Index)
-	//}
+	if !c.pieces.Get(int(req.Index)) {
+		return []byte{}, fmt.Errorf("client does not have piece %d", req.Index)
+	}
 
 	filePath := path.Join(c.baseDir, c.torrent.HexHash(), fmt.Sprintf("%d.part", req.Index))
 
