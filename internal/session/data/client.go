@@ -82,7 +82,9 @@ type Client struct {
 	DownloadRate btorrent.Size
 	Uploaded     int
 
-	workers    map[int]*worker
+	workers map[int]*worker
+
+	repo PieceService
 }
 
 func (c *Client) Stop() error {

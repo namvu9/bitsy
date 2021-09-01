@@ -72,14 +72,25 @@ func (p *Peer) IDStr() string {
 	return fmt.Sprintf("%x", p.ID[8:])
 }
 
+func (p *Peer) Closed() bool {
+	return p.closed
+}
+
 func (p *Peer) Close(reason string) error {
 	if p == nil {
+		return nil
+	}
+
+	if p.closed {
 		return nil
 	}
 
 	for _, fn := range p.onClose {
 		fn(p)
 	}
+
+	p.closed = true
+
 	return p.Conn.Close()
 }
 
@@ -148,7 +159,6 @@ func (p *Peer) Listen(ctx context.Context) {
 		select {
 		case <-ticker.C:
 			if p.Idle() {
-				fmt.Println("IDLE")
 				p.Close("IDLE")
 				return
 			}
@@ -238,7 +248,7 @@ func (p *Peer) Init() error {
 }
 
 func (p *Peer) Is(other *Peer) bool {
-	return p.RemoteAddr() == other.RemoteAddr()
+	return p.RemoteAddr() == other.RemoteAddr() || p == other
 }
 
 func New(c net.Conn) *Peer {

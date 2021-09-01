@@ -109,7 +109,6 @@ func foo(ctx context.Context, t btorrent.Torrent, peers []net.Addr) (*btorrent.T
 }
 
 func getMeta(ctx context.Context, t *btorrent.Torrent, port uint16) (*btorrent.Torrent, error) {
-	os.Stderr.WriteString(fmt.Sprintf("GET META %d\n", port))
 	res := make(chan btorrent.Torrent)
 	go func() {
 	start:

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/namvu9/bitsy/internal/errors"
@@ -30,28 +31,41 @@ type connectionService struct {
 
 	Reserved *peer.Extensions
 	pstr     string
+
+	hosts map[net.Addr]bool
+
+	lock sync.Mutex
+}
+
+func (cs *connectionService) closeConn(p *peer.Peer) {
+	cs.lock.Lock()
+	defer cs.lock.Unlock()
+
+	if !cs.hosts[p.RemoteAddr()] {
+		return
+	}
+
+	delete(cs.hosts, p.RemoteAddr())
+	<-cs.conns
 }
 
 func (cs *connectionService) Dial(addr net.Addr, cfg peer.DialConfig) (*peer.Peer, error) {
+	if _, ok := cs.hosts[addr]; ok {
+		return nil, fmt.Errorf("already dialed")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	p, err := peer.Dial(ctx, addr, cfg)
 	if err != nil {
 		return nil, err
 	}
-	p.OnClose(func(p *peer.Peer) {
-		if len(cs.conns) == 0 {
-			return
-		}
-		cs.emitter <- ConnCloseEvent{
-			Peer: p,
-			Hash: cfg.InfoHash,
-		}
-		<-cs.conns
-	})
 
 	select {
 	case cs.conns <- struct{}{}:
+		cs.lock.Lock()
+		cs.hosts[p.RemoteAddr()] = true
+		cs.lock.Unlock()
+		p.OnClose(cs.closeConn)
 	default:
 		err := fmt.Errorf("exceeded max conns")
 		p.Close(err.Error())
@@ -85,13 +99,25 @@ func (cs *connectionService) Init(ctx context.Context) error {
 				continue
 			}
 
-			err = cs.acceptHandshake(conn)
-			if err != nil {
+			if _, ok := cs.hosts[conn.RemoteAddr()]; ok {
 				conn.Close()
 				continue
 			}
 
-			cs.conns <- struct{}{}
+			select {
+			case cs.conns <- struct{}{}:
+				cs.lock.Lock()
+				cs.hosts[conn.RemoteAddr()] = true
+				cs.lock.Unlock()
+				err = cs.acceptHandshake(conn)
+				if err != nil {
+					conn.Close()
+					<- cs.conns
+					continue
+				}
+			default:
+				conn.Close()
+			}
 		}
 	}()
 
@@ -118,18 +144,11 @@ func (cs *connectionService) acceptHandshake(conn net.Conn) error {
 		return err
 	}
 
-	p.OnClose(func(p *peer.Peer) {
-		if len(cs.conns) == 0 {
-			return
-		}
-		cs.emitter <- ConnCloseEvent{
-			Peer: p,
-			Hash: torrent.InfoHash(),
-		}
-		<-cs.conns
-	})
+	p.OnClose(cs.closeConn)
 
 	go p.Listen(context.Background())
+	// TODO: Don't create peer here, inject dependency to
+	// peers service
 	cs.emitter <- NewConnEvent{Peer: p, Hash: torrent.InfoHash()}
 
 	return nil
@@ -152,15 +171,11 @@ func NewService(cfg Config, emitter chan<- interface{}) Service {
 		port:     cfg.Port,
 		peerID:   cfg.PeerID,
 		emitter:  emitter,
+		hosts:    make(map[net.Addr]bool),
 
 		Reserved: cfg.Reserved,
 		pstr:     cfg.PStr,
 	}
-}
-
-type upnpRes struct {
-	externalIP string
-	port       int
 }
 
 // Handshake attempts to perform a handshake with the given

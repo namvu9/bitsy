@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path"
-	"strings"
 	"time"
 
 	"github.com/namvu9/bitsy/internal/session/conn"
@@ -62,8 +61,6 @@ func (s *Session) handleEvents(ctx context.Context) {
 			s.register(v.t, v.opts)
 		case conn.NewConnEvent:
 			s.handleNewConn(v)
-		case conn.ConnCloseEvent:
-			s.handleCloseConn(v)
 		case peers.MessageReceived:
 			s.handlePeerMessage(v)
 		case data.RequestMessage:
@@ -196,32 +193,6 @@ func clear() {
 	cmd.Run()
 }
 
-func (s *Session) stat() {
-	for hash, torrent := range s.torrents {
-		var sb strings.Builder
-		fmt.Fprintln(&sb, torrent.Name())
-
-		clientStat := s.data.Stat(hash)
-		fmt.Fprintf(&sb, "State: %s\n", clientStat.State)
-		fmt.Fprintf(&sb, "Uploaded: %s\n", clientStat.Uploaded)
-		fmt.Fprintf(&sb, "Downloaded: %s / %s\n", min(clientStat.Downloaded, torrent.Length()), torrent.Length())
-		fmt.Fprintf(&sb, "Download rate: %s / s\n", clientStat.DownloadRate)
-		fmt.Fprintf(&sb, "Pending pieces: %d\n\n", clientStat.Pending)
-
-		for _, file := range clientStat.Files {
-			if file.Ignored {
-				continue
-			}
-
-			fmt.Fprintf(&sb, "%s (%s/%s)\n", file.Name, file.Downloaded, file.Size)
-		}
-
-		fmt.Fprintln(&sb, s.peers.Swarms()[hash])
-		clear()
-		fmt.Println(sb.String())
-	}
-}
-
 // Optimistic unchoke
 func (s *Session) unchoke() {
 	for hash, stat := range s.peers.Swarms() {
@@ -290,17 +261,12 @@ func New(cfg Config) *Session {
 	}
 	peersService := peers.NewService(peersCfg, eventsIn)
 
-	s := &Session{
-		baseDir: cfg.BaseDir,
-
+	return &Session{
+		baseDir:  cfg.BaseDir,
 		EventsIn: eventsIn,
-
 		torrents: make(map[[20]byte]btorrent.Torrent),
-
-		data:  dataService,
-		conn:  connService,
-		peers: peersService,
+		data:     dataService,
+		conn:     connService,
+		peers:    peersService,
 	}
-
-	return s
 }

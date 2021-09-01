@@ -39,7 +39,7 @@ type InfoHash = [20]byte
 type peerService struct {
 	emitter  chan interface{}
 	trackers map[InfoHash][]*tracker.TrackerGroup
-	peers    map[InfoHash]map[string]*peer.Peer
+	peers    map[InfoHash][]*peer.Peer
 
 	port   uint16
 	peerID [20]byte
@@ -67,11 +67,15 @@ func (service *peerService) Swarms() map[InfoHash]SwarmStat {
 	out := make(map[InfoHash]SwarmStat)
 
 	for hash, peers := range service.peers {
-		stat := SwarmStat{
-			Peers: len(peers),
-		}
+
+		stat := SwarmStat{}
 
 		for _, p := range peers {
+			if p.Closed() {
+				continue
+			}
+
+			stat.Peers++
 			if p.Choked {
 				stat.Choked++
 			}
@@ -96,13 +100,16 @@ func (service *peerService) Swarms() map[InfoHash]SwarmStat {
 }
 
 func (service *peerService) Add(hash InfoHash, p *peer.Peer) {
-	s, ok := service.peers[hash]
-	if !ok {
-		p.Close("unknown hash")
+	if p.Closed() {
 		return
 	}
 
-	s[p.RemoteAddr().String()] = p
+	s, ok := service.peers[hash]
+	if !ok {
+		return
+	}
+
+	service.peers[hash] = append(s, p)
 
 	go func() {
 		for msg := range p.Msg {
@@ -121,7 +128,13 @@ func (service *peerService) Remove(hash InfoHash, p *peer.Peer) {
 		return
 	}
 
-	delete(s, p.RemoteAddr().String())
+	for i, peer := range s {
+		if peer.Is(p) {
+			s[i] = s[len(s)-1]
+			service.peers[hash] = s[:len(s)-1]
+			return
+		}
+	}
 }
 
 func (service *peerService) Register(t btorrent.Torrent) {
@@ -130,7 +143,7 @@ func (service *peerService) Register(t btorrent.Torrent) {
 		return
 	}
 
-	service.peers[t.InfoHash()] = make(map[string]*peer.Peer)
+	service.peers[t.InfoHash()] = make([]*peer.Peer, 0)
 
 	for _, tier := range t.AnnounceList() {
 		service.trackers[t.InfoHash()] = append(service.trackers[t.InfoHash()], tracker.NewGroup(tier))
@@ -162,7 +175,7 @@ type Config struct {
 func NewService(cfg Config, emitter chan interface{}) Service {
 	return &peerService{
 		trackers: make(map[InfoHash][]*tracker.TrackerGroup),
-		peers:    make(map[InfoHash]map[string]*peer.Peer),
+		peers:    make(map[InfoHash][]*peer.Peer),
 		emitter:  emitter,
 		port:     cfg.Port,
 		peerID:   cfg.PeerID,

@@ -27,6 +27,8 @@ type Pieces []struct {
 	piece []byte
 }
 
+// VerifyInfoDict verifies that the SHA-1 hash of the
+// torrent's info dictionary matches the torrent's info hash
 func (t *Torrent) VerifyInfoDict() bool {
 	info, ok := t.Info()
 	if !ok {

@@ -91,6 +91,10 @@ func (s *Session) handlePeerMessage(ev peers.MessageReceived) {
 
 func (s *Session) handleNewConn(ev conn.NewConnEvent) {
 	p := ev.Peer
+	p.OnClose(func(p *peer.Peer) {
+		s.peers.Remove(ev.Hash, p)
+	})
+
 	status, err := s.data.Status(ev.Hash)
 	if err != nil {
 		p.Close(err.Error())
@@ -117,15 +121,15 @@ func (s *Session) handleNewConn(ev conn.NewConnEvent) {
 		return
 	}
 
-	s.peers.Add(ev.Hash, p)
-
 	if p.Extensions.IsEnabled(peer.EXT_FAST) {
 		go s.sendFastBitfield(ev.Hash, p)
 		go s.sendAllowFastSet(ev.Hash, p)
-		return
 	}
 
 	go p.Send(peer.BitFieldMessage{BitField: bitField})
+
+	s.peers.Add(ev.Hash, p)
+
 }
 
 func (s *Session) sendFastBitfield(hash [20]byte, p *peer.Peer) {

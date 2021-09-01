@@ -74,7 +74,6 @@ func Chunk(pl []net.Addr, size int) (out [][]net.Addr) {
 
 type PeerStream chan *Peer
 
-// TODO: add context to cancel early
 func DialMany(ctx context.Context, addrs []net.Addr, batchSize int, cfg DialConfig) PeerStream {
 	out := make(chan *Peer, len(addrs))
 
