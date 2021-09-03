@@ -3,6 +3,7 @@ package peers
 import (
 	"math/rand"
 	"net"
+	"sort"
 	"time"
 
 	"github.com/namvu9/bitsy/pkg/btorrent"
@@ -10,9 +11,10 @@ import (
 	"github.com/namvu9/bitsy/pkg/btorrent/tracker"
 )
 
+type OrderByFunc func(*peer.Peer, *peer.Peer) bool
 type GetRequest struct {
 	Limit   int
-	OrderBy func()
+	OrderBy OrderByFunc
 	Filter  func(*peer.Peer) bool
 }
 
@@ -45,10 +47,28 @@ type peerService struct {
 	peerID [20]byte
 }
 
+func (service *peerService) getPeersSorted(hash InfoHash, orderBy OrderByFunc) []*peer.Peer {
+	var cpy []*peer.Peer
+
+	for _, peer := range service.peers[hash] {
+		cpy = append(cpy, peer)
+	}
+
+	if orderBy != nil {
+		sort.SliceStable(cpy, func(i, j int) bool {
+			return orderBy(cpy[i], cpy[j])
+		})
+	}
+
+	return cpy
+}
+
 // TODO: Shuffle if OrderBy == nil
 func (service *peerService) Get(hash InfoHash, req GetRequest) GetResponse {
+	sorted := service.getPeersSorted(hash, req.OrderBy)
+
 	var out []*peer.Peer
-	for _, p := range service.peers[hash] {
+	for _, p := range sorted {
 		if req.Limit > 0 && len(out) == req.Limit {
 			break
 		}
@@ -67,8 +87,18 @@ func (service *peerService) Swarms() map[InfoHash]SwarmStat {
 	out := make(map[InfoHash]SwarmStat)
 
 	for hash, peers := range service.peers {
+		sorted := service.getPeersSorted(hash, func(p1, p2 *peer.Peer) bool {
+			return p1.Uploaded > p2.Uploaded
+		})
 
+		
 		stat := SwarmStat{}
+
+		if len(sorted) < 5 {
+			stat.TopPeers = sorted
+		} else {
+			stat.TopPeers = sorted[:5]
+		}
 
 		for _, p := range peers {
 			if p.Closed() {

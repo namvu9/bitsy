@@ -24,7 +24,10 @@ func (s *Session) handleDownloadCompleteEvent(ev data.DownloadCompleteEvent) {
 
 func (s *Session) handleRequestMessage(msg data.RequestMessage) {
 	res := s.peers.Get(msg.Hash, peers.GetRequest{
-		Limit: 2,
+		Limit: 1,
+		OrderBy: func(p1, p2 *peer.Peer) bool {
+			return p1.Uploaded > p2.Uploaded
+		},
 		Filter: func(p *peer.Peer) bool {
 			// TODO: OR FAST
 			return p.HasPiece(int(msg.Index)) &&
