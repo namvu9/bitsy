@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/namvu9/bitsy/internal/session/conn"
-	"github.com/namvu9/bitsy/internal/session/data"
-	"github.com/namvu9/bitsy/internal/session/peers"
+	"github.com/namvu9/bitsy/internal/conn"
+	"github.com/namvu9/bitsy/internal/data"
+	"github.com/namvu9/bitsy/internal/peers"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
 )
+
+const ALLOWED_FAST_SET_SIZE = 10
 
 func (s *Session) handleCloseConn(ev conn.ConnCloseEvent) {
 	s.peers.Remove(ev.Hash, ev.Peer)
@@ -24,15 +26,28 @@ func (s *Session) handleDownloadCompleteEvent(ev data.DownloadCompleteEvent) {
 
 func (s *Session) handleRequestMessage(msg data.RequestMessage) {
 	res := s.peers.Get(msg.Hash, peers.GetRequest{
-		Limit: 1,
+		Limit: 3,
 		OrderBy: func(p1, p2 *peer.Peer) bool {
-			return p1.Uploaded > p2.Uploaded
+			if p1.UploadRate > p2.UploadRate {
+				return true
+			}
+
+			if p1.UploadRate == p2.UploadRate && p1.Uploaded > p2.Uploaded {
+				return true
+			}
+
+			return false
+
 		},
 		Filter: func(p *peer.Peer) bool {
-			// TODO: OR FAST
+			if p.HasPiece(int(msg.Index)) && s.isAllowedFast(msg.Hash, int(msg.Index), p) {
+				return true
+			}
+
 			return p.HasPiece(int(msg.Index)) &&
 				!p.Blocking &&
-				!p.IsServing(msg.Index, msg.Offset)
+				!p.IsServing(msg.Index, msg.Offset) &&
+				!p.Idle()
 		},
 	})
 
@@ -52,7 +67,8 @@ func (s *Session) handlePeerMessage(ev peers.MessageReceived) {
 
 	switch msg := ev.Msg.(type) {
 	case peer.AllowedFastMessage:
-		// TODO: IMPLEMENT
+		s.data.RequestPiece(ev.Hash, int(msg.Index))
+
 	case peer.BitFieldMessage:
 		t := s.torrents[ev.Hash]
 		for idx := range t.Pieces() {
@@ -72,10 +88,9 @@ func (s *Session) handlePeerMessage(ev peers.MessageReceived) {
 	case peer.RequestMessage:
 		data, err := s.data.GetPiece(ev.Hash, msg)
 		if err != nil {
-			fmt.Println(err)
 			p := ev.Peer
 			if p.Extensions.IsEnabled(peer.EXT_FAST) {
-				p.Send(peer.RejectRequestMessage{
+				p.Send(peer.RejectRequestMsg{
 					Index:  msg.Index,
 					Offset: msg.Offset,
 					Length: msg.Length,
@@ -105,6 +120,7 @@ func (s *Session) handleNewConn(ev conn.NewConnEvent) {
 	}
 
 	if status == data.PAUSED || status == data.ERROR {
+		p.Close(err.Error())
 		return
 	}
 
@@ -132,7 +148,6 @@ func (s *Session) handleNewConn(ev conn.NewConnEvent) {
 	go p.Send(peer.BitFieldMessage{BitField: bitField})
 
 	s.peers.Add(ev.Hash, p)
-
 }
 
 func (s *Session) sendFastBitfield(hash [20]byte, p *peer.Peer) {
@@ -156,10 +171,24 @@ func (s *Session) sendFastBitfield(hash [20]byte, p *peer.Peer) {
 }
 
 func (s *Session) sendAllowFastSet(hash [20]byte, p *peer.Peer) {
+	for _, pieceIdx := range s.computeAllowedFastSet(hash, p) {
+		go p.Send(peer.AllowedFastMessage{Index: uint32(pieceIdx)})
+	}
+}
+
+func (s *Session) computeAllowedFastSet(hash [20]byte, p *peer.Peer) []int {
 	addr := p.RemoteAddr().(*net.TCPAddr)
 	t := s.torrents[hash]
 
-	for _, pieceIdx := range t.GenFastSet(addr.IP, 10) {
-		go p.Send(peer.AllowedFastMessage{Index: uint32(pieceIdx)})
+	return t.GenFastSet(addr.IP, ALLOWED_FAST_SET_SIZE)
+}
+
+func (s *Session) isAllowedFast(hash [20]byte, idx int, p *peer.Peer) bool {
+	for _, pieceIdx := range s.computeAllowedFastSet(hash, p) {
+		if pieceIdx == idx {
+			return true
+		}
 	}
+
+	return false
 }

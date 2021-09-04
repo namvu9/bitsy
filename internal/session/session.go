@@ -11,9 +11,12 @@ import (
 	"path"
 	"time"
 
-	"github.com/namvu9/bitsy/internal/session/conn"
-	"github.com/namvu9/bitsy/internal/session/data"
-	"github.com/namvu9/bitsy/internal/session/peers"
+	"github.com/namvu9/bitsy/internal/assembler"
+	"github.com/namvu9/bitsy/internal/conn"
+	"github.com/namvu9/bitsy/internal/data"
+	"github.com/namvu9/bitsy/internal/peers"
+	"github.com/namvu9/bitsy/internal/pieces"
+	"github.com/namvu9/bitsy/internal/ports"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
 )
@@ -43,7 +46,7 @@ type Session struct {
 	startedAt time.Time
 
 	baseDir  string
-	EventsIn chan interface{}
+	eventsIn chan interface{}
 	torrents map[[20]byte]btorrent.Torrent
 
 	data  data.Service
@@ -53,7 +56,7 @@ type Session struct {
 
 func (s *Session) handleEvents(ctx context.Context) {
 	for {
-		event := <-s.EventsIn
+		event := <-s.eventsIn
 		switch v := event.(type) {
 		case PauseCmd:
 			s.data.Stop(v.Hash)
@@ -61,6 +64,8 @@ func (s *Session) handleEvents(ctx context.Context) {
 			s.register(v.t, v.opts)
 		case conn.NewConnEvent:
 			s.handleNewConn(v)
+		case conn.ConnCloseEvent:
+			s.peers.Remove(v.Hash, v.Peer)
 		case peers.MessageReceived:
 			s.handlePeerMessage(v)
 		case data.RequestMessage:
@@ -129,7 +134,7 @@ func (s *Session) register(t btorrent.Torrent, opts []data.Option) {
 
 func (s *Session) Register(t btorrent.Torrent, opts ...data.Option) {
 	go func() {
-		s.EventsIn <- RegisterCmd{t: t, opts: opts}
+		s.eventsIn <- RegisterCmd{t: t, opts: opts}
 	}()
 }
 
@@ -161,8 +166,8 @@ func (s *Session) heartbeat(ctx context.Context) {
 
 func (s *Session) fillSwarms() {
 	for hash, stat := range s.peers.Swarms() {
-		if stat.Peers < 10 {
-			want := 10 - stat.Peers
+		if stat.Peers < 30 {
+			want := 30 - stat.Peers
 			pInfo := s.peers.Discover(hash, 30)
 			cfg := peer.DialConfig{
 				PStr:       PStr,
@@ -188,7 +193,7 @@ func (s *Session) fillSwarms() {
 }
 
 func clear() {
-	cmd := exec.Command("clear") //Linux example, its tested
+	cmd := exec.Command("clear")
 	cmd.Stdout = os.Stdout
 	cmd.Run()
 }
@@ -224,24 +229,23 @@ func (s *Session) unchoke() {
 }
 
 func (s *Session) Pause(hash [20]byte) error {
-	s.EventsIn <- PauseCmd{Hash: hash}
+	s.eventsIn <- PauseCmd{Hash: hash}
 
 	return nil
 }
 
-func min(a, b btorrent.Size) btorrent.Size {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 func New(cfg Config) *Session {
-	eventsIn := make(chan interface{}, 32)
+	eventsIn := make(chan interface{}, 100)
+
+	var portsService = ports.NewService()
+	port, err := portsService.ForwardMany(cfg.Ports)
+	if err != nil {
+		panic(err)
+	}
 
 	var connCfg = conn.Config{
 		IP:             cfg.IP,
-		Port:           cfg.Port,
+		Port:           port,
 		PeerID:         PeerID,
 		MaxConnections: cfg.MaxConnections,
 		PStr:           PStr,
@@ -249,21 +253,34 @@ func New(cfg Config) *Session {
 	}
 	connService := conn.NewService(connCfg, eventsIn)
 
+	var piecesCfg = pieces.Config{
+		BaseDir: cfg.BaseDir,
+	}
+	pieceMgr := pieces.NewService(piecesCfg)
+
+	var assemblerCfg = assembler.Config{
+		BaseDir:     cfg.BaseDir,
+		DownloadDir: cfg.DownloadDir,
+	}
+	assemblerService := assembler.NewService(assemblerCfg)
+
 	var dataCfg = data.Config{
 		BaseDir:     cfg.BaseDir,
 		DownloadDir: cfg.DownloadDir,
+		Assembler:   assemblerService,
+		PieceMgr:    pieceMgr,
 	}
 	dataService := data.NewService(dataCfg, eventsIn)
 
 	var peersCfg = peers.Config{
-		Port:   cfg.Port,
+		Port:   port,
 		PeerID: PeerID,
 	}
 	peersService := peers.NewService(peersCfg, eventsIn)
 
 	return &Session{
+		eventsIn: eventsIn,
 		baseDir:  cfg.BaseDir,
-		EventsIn: eventsIn,
 		torrents: make(map[[20]byte]btorrent.Torrent),
 		data:     dataService,
 		conn:     connService,

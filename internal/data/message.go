@@ -2,8 +2,6 @@ package data
 
 import (
 	"fmt"
-	"io/ioutil"
-	"path"
 
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
 )
@@ -60,9 +58,7 @@ func (c *Client) handleRequestMessage(req peer.RequestMessage) ([]byte, error) {
 		return []byte{}, fmt.Errorf("client does not have piece %d", req.Index)
 	}
 
-	filePath := path.Join(c.baseDir, c.torrent.HexHash(), fmt.Sprintf("%d.part", req.Index))
-
-	data, err := ioutil.ReadFile(filePath)
+	data, err := c.pieceMgr.Load(c.torrent.InfoHash(), int(req.Index))
 	if err != nil {
 		return []byte{}, err
 	}

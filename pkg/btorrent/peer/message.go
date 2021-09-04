@@ -290,13 +290,13 @@ func (m SuggestPieceMessage) Bytes() []byte {
 	return buf.Bytes()
 }
 
-type RejectRequestMessage struct {
+type RejectRequestMsg struct {
 	Index  uint32
 	Offset uint32
 	Length uint32
 }
 
-func (m RejectRequestMessage) Bytes() []byte {
+func (m RejectRequestMsg) Bytes() []byte {
 	var buf bytes.Buffer
 
 	binary.Write(&buf, binary.BigEndian, int32(13))
@@ -401,6 +401,8 @@ func UnmarshallMessage(r io.ReadCloser) (Message, error) {
 		return HaveNoneMessage{}, nil
 	case AllowedFast:
 		return UnmarshalAllowedFastMessage(payload)
+	case Reject:
+		return UnmarshalRejectRequestMsg(payload)
 
 	default:
 		return KeepAliveMessage{}, nil
@@ -457,6 +459,21 @@ func UnmarshallPieceMessage(data []byte) (PieceMessage, error) {
 
 func UnmarshalCancelMessage(data []byte) (CancelMessage, error) {
 	var msg CancelMessage
+
+	if got := len(data); got != 12 {
+		err := errors.Newf("payload length, want %d but got %d", 12, got)
+		return msg, errors.Wrap(err, errors.BadArgument)
+	}
+
+	msg.Index = binary.BigEndian.Uint32(data[:4])
+	msg.Offset = binary.BigEndian.Uint32(data[4:8])
+	msg.Length = binary.BigEndian.Uint32(data[8:12])
+
+	return msg, nil
+}
+
+func UnmarshalRejectRequestMsg(data []byte) (RejectRequestMsg, error) {
+	var msg RejectRequestMsg
 
 	if got := len(data); got != 12 {
 		err := errors.Newf("payload length, want %d but got %d", 12, got)

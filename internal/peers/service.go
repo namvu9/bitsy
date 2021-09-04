@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"net"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/namvu9/bitsy/pkg/btorrent"
@@ -27,7 +28,6 @@ type Service interface {
 	Add(InfoHash, *peer.Peer)
 	Remove(InfoHash, *peer.Peer)
 
-	//Stat(InfoHash)
 	Register(btorrent.Torrent)
 	Unregister(InfoHash)
 
@@ -41,10 +41,11 @@ type InfoHash = [20]byte
 type peerService struct {
 	emitter  chan interface{}
 	trackers map[InfoHash][]*tracker.TrackerGroup
-	peers    map[InfoHash][]*peer.Peer
+	peers    map[InfoHash]map[string]*peer.Peer
 
 	port   uint16
 	peerID [20]byte
+	lock   sync.Mutex
 }
 
 func (service *peerService) getPeersSorted(hash InfoHash, orderBy OrderByFunc) []*peer.Peer {
@@ -88,16 +89,33 @@ func (service *peerService) Swarms() map[InfoHash]SwarmStat {
 
 	for hash, peers := range service.peers {
 		sorted := service.getPeersSorted(hash, func(p1, p2 *peer.Peer) bool {
-			return p1.Uploaded > p2.Uploaded
+			if p1.UploadRate > p2.UploadRate {
+				return true
+			}
+
+			if p1.UploadRate == p2.UploadRate && p1.Uploaded > p2.Uploaded {
+				return true
+			}
+
+			return len(p1.Requests) > len(p2.Requests)
 		})
 
-		
 		stat := SwarmStat{}
 
 		if len(sorted) < 5 {
 			stat.TopPeers = sorted
 		} else {
 			stat.TopPeers = sorted[:5]
+		}
+
+		sorted = service.getPeersSorted(hash, func(p1, p2 *peer.Peer) bool {
+			return p1.Downloaded > p2.Downloaded
+		})
+
+		if len(sorted) < 5 {
+			stat.TopDownloaders = sorted
+		} else {
+			stat.TopDownloaders = sorted[:5]
 		}
 
 		for _, p := range peers {
@@ -130,6 +148,9 @@ func (service *peerService) Swarms() map[InfoHash]SwarmStat {
 }
 
 func (service *peerService) Add(hash InfoHash, p *peer.Peer) {
+	service.lock.Lock()
+	defer service.lock.Unlock()
+
 	if p.Closed() {
 		return
 	}
@@ -139,7 +160,9 @@ func (service *peerService) Add(hash InfoHash, p *peer.Peer) {
 		return
 	}
 
-	service.peers[hash] = append(s, p)
+	if _, ok := s[p.RemoteAddr().String()]; !ok {
+		s[p.RemoteAddr().String()] = p
+	}
 
 	go func() {
 		for msg := range p.Msg {
@@ -153,18 +176,14 @@ func (service *peerService) Add(hash InfoHash, p *peer.Peer) {
 }
 
 func (service *peerService) Remove(hash InfoHash, p *peer.Peer) {
+	service.lock.Lock()
+	defer service.lock.Unlock()
 	s, ok := service.peers[hash]
 	if !ok {
 		return
 	}
 
-	for i, peer := range s {
-		if peer.Is(p) {
-			s[i] = s[len(s)-1]
-			service.peers[hash] = s[:len(s)-1]
-			return
-		}
-	}
+	delete(s, p.RemoteAddr().String())
 }
 
 func (service *peerService) Register(t btorrent.Torrent) {
@@ -173,7 +192,7 @@ func (service *peerService) Register(t btorrent.Torrent) {
 		return
 	}
 
-	service.peers[t.InfoHash()] = make([]*peer.Peer, 0)
+	service.peers[t.InfoHash()] = make(map[string]*peer.Peer)
 
 	for _, tier := range t.AnnounceList() {
 		service.trackers[t.InfoHash()] = append(service.trackers[t.InfoHash()], tracker.NewGroup(tier))
@@ -205,7 +224,7 @@ type Config struct {
 func NewService(cfg Config, emitter chan interface{}) Service {
 	return &peerService{
 		trackers: make(map[InfoHash][]*tracker.TrackerGroup),
-		peers:    make(map[InfoHash][]*peer.Peer),
+		peers:    make(map[InfoHash]map[string]*peer.Peer),
 		emitter:  emitter,
 		port:     cfg.Port,
 		peerID:   cfg.PeerID,

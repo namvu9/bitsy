@@ -2,8 +2,10 @@ package peer
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"net"
+	"os"
 	"time"
 
 	"github.com/namvu9/bencode"
@@ -40,10 +42,12 @@ type Peer struct {
 
 	// Stats
 	// Number of bytes uploaded in the last n-second window
-	UploadRate   int64
-	Uploaded     int64
-	DownloadRate int64
-	Downloaded   int64
+	lastUploadTime time.Time
+	lastUploaded   int64
+	UploadRate     int64
+	Uploaded       int64
+	DownloadRate   int64
+	Downloaded     int64
 
 	// A bitfield specifying the indexes of the pieces that
 	// the peer has
@@ -55,7 +59,7 @@ type Peer struct {
 	LastMessageReceived time.Time
 	LastMessageSent     time.Time
 
-	requests []RequestMessage
+	Requests []RequestMessage
 
 	onClose []func(*Peer)
 }
@@ -99,7 +103,7 @@ func (p *Peer) OnClose(fn func(*Peer)) {
 }
 
 func (p *Peer) IsServing(index uint32, offset uint32) bool {
-	for _, req := range p.requests {
+	for _, req := range p.Requests {
 		if req.Index == index && req.Offset == offset {
 			return true
 		}
@@ -109,7 +113,7 @@ func (p *Peer) IsServing(index uint32, offset uint32) bool {
 }
 
 func (p *Peer) Send(msg Message) error {
-	switch msg.(type) {
+	switch v := msg.(type) {
 	case UnchokeMessage:
 		p.Choked = false
 	case ChokeMessage:
@@ -121,6 +125,10 @@ func (p *Peer) Send(msg Message) error {
 		p.Interesting = true
 	case NotInterestedMessage:
 		p.Interesting = false
+	case RequestMessage:
+		p.Requests = append(p.Requests, v)
+	case PieceMessage:
+		p.Downloaded += int64(len(v.Piece))
 	}
 
 	_, err := p.write(msg.Bytes())
@@ -159,22 +167,33 @@ func (p *Peer) Listen(ctx context.Context) {
 		select {
 		case <-ticker.C:
 			if p.Idle() {
-				p.Close("IDLE")
 				return
 			}
 
+			if diffTime := time.Now().Sub(p.lastUploadTime); diffTime > 5*time.Second {
+				diff := p.Uploaded - p.lastUploaded
+				p.lastUploaded = p.Uploaded
+				p.lastUploadTime = time.Now()
+
+				p.UploadRate = diff / (int64(diffTime.Seconds()))
+			}
+
 		case <-ctx.Done():
-			p.Close("DONE")
 			return
 		default:
 		}
 
+		p.Conn.SetDeadline(time.Now().Add(5 * time.Second))
 		msg, err := UnmarshallMessage(p.Conn)
 		p.LastMessageReceived = time.Now()
 
 		if err != nil && errors.IsEOF(err) {
 			p.Close(err.Error())
 			return
+		}
+
+		if err != nil && stderrors.Is(err, os.ErrDeadlineExceeded) {
+			continue
 		}
 
 		if err != nil {
@@ -187,10 +206,19 @@ func (p *Peer) Listen(ctx context.Context) {
 			p.Pieces.Set(int(v.Index))
 		case PieceMessage:
 			p.Uploaded += int64(len(v.Piece))
+
 			p.DataStream <- v
+			var out []RequestMessage
+			for _, msg := range p.Requests {
+				if msg.Index != v.Index && msg.Offset != v.Offset {
+					out = append(out, msg)
+				}
+			}
+
+			p.Requests = out
 		case ChokeMessage:
 			p.Blocking = true
-			p.requests = make([]RequestMessage, 0)
+			p.Requests = make([]RequestMessage, 0)
 		case UnchokeMessage:
 			p.Blocking = false
 		case InterestedMessage:
@@ -204,6 +232,15 @@ func (p *Peer) Listen(ctx context.Context) {
 			p.Pieces = bits.Ones(len(p.Pieces))
 		case *ExtHandshakeMsg:
 			p.handleExtHandshakeMsg(v)
+		case RejectRequestMsg:
+			var out []RequestMessage
+			for _, msg := range p.Requests {
+				if msg.Index != v.Index {
+					out = append(out, msg)
+				}
+			}
+
+			p.Requests = out
 		}
 
 		p.Msg <- msg
@@ -240,6 +277,7 @@ func (p *Peer) Init() error {
 	if msg.PStr != "BitTorrent protocol" {
 		return fmt.Errorf("got %s want %s", msg.PStr, "BitTorrent protocol")
 	}
+
 	p.Extensions = NewExtensionsField(msg.Reserved)
 	p.ID = msg.PeerID[:]
 	p.InfoHash = msg.InfoHash
@@ -258,6 +296,7 @@ func New(c net.Conn) *Peer {
 		Choked:              true,
 		LastMessageReceived: time.Now(),
 		LastMessageSent:     time.Now(),
+		lastUploadTime:      time.Now(),
 		Msg:                 make(chan Message, 32),
 		DataStream:          make(chan PieceMessage, 32),
 	}

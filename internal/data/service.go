@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/namvu9/bitsy/internal/assembler"
+	"github.com/namvu9/bitsy/internal/pieces"
 	"github.com/namvu9/bitsy/pkg/bits"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
@@ -12,21 +14,16 @@ import (
 type InfoHash [20]byte
 
 type Service interface {
-	Init(context.Context) error
-	Register(btorrent.Torrent, ...Option)
-	Stop(InfoHash) error
-	Status(InfoHash) (ClientState, error)
-	Pieces(InfoHash) (bits.BitField, error)
-
-	Stat(InfoHash) ClientStat
-
-	GetPiece(InfoHash, peer.RequestMessage) ([]byte, error)
-
 	AddDataStream(InfoHash, *peer.Peer) error
-
-	// TODO: Implement piece priority:
-	// e.g., AllowedFast? Rare piece?
+	GetPiece(InfoHash, peer.RequestMessage) ([]byte, error)
+	Init(context.Context) error
+	Pieces(InfoHash) (bits.BitField, error)
+	Register(btorrent.Torrent, ...Option)
+	RequestPiece(InfoHash, int) error
 	SetPriority(InfoHash, []int) error
+	Stat(InfoHash) ClientStat
+	Status(InfoHash) (ClientState, error)
+	Stop(InfoHash) error
 }
 
 type dataService struct {
@@ -37,6 +34,9 @@ type dataService struct {
 	baseDir     string
 	downloadDir string
 	emitter     chan interface{}
+
+	assembler assembler.Service
+	pieceMgr  pieces.Service
 }
 
 func (ds *dataService) GetPiece(hash InfoHash, req peer.RequestMessage) ([]byte, error) {
@@ -46,10 +46,21 @@ func (ds *dataService) GetPiece(hash InfoHash, req peer.RequestMessage) ([]byte,
 
 func (ds *dataService) Stat(hash InfoHash) ClientStat {
 	c, _ := ds.clients[hash]
+
 	return c.Stat()
 }
 
 func (ds *dataService) Init(ctx context.Context) error {
+	err := ds.assembler.Init()
+	if err != nil {
+		return err
+	}
+
+	err = ds.pieceMgr.Init()
+	if err != nil {
+		return err
+	}
+
 	for _, c := range ds.clients {
 		if c.state == PAUSED {
 			continue
@@ -83,7 +94,10 @@ func (ds *dataService) AddDataStream(hash InfoHash, p *peer.Peer) error {
 
 func (ds *dataService) Register(t btorrent.Torrent, opts ...Option) {
 	if client, ok := ds.clients[t.InfoHash()]; !ok {
-		c := New(t, ds.baseDir, ds.downloadDir, ds.emitter, opts...)
+		ds.assembler.Register(t)
+		ds.pieceMgr.Register(t)
+
+		c := New(t, ds.baseDir, ds.downloadDir, ds.emitter, ds.pieceMgr, ds.assembler, opts...)
 		ds.clients[t.InfoHash()] = c
 		ds.torrents[t.InfoHash()] = t
 		ds.ranks[t.InfoHash()] = make([]int, len(t.Pieces()))
@@ -135,9 +149,22 @@ func (ds *dataService) SetPriority(hash InfoHash, ranks []int) error {
 	return nil
 }
 
+func (ds *dataService) RequestPiece(hash InfoHash, idx int) error {
+	c, _ := ds.clients[hash]
+
+	if !c.pieces.Get(idx) {
+		c.downloadPiece(uint32(idx), true)
+	}
+
+	return nil
+}
+
 type Config struct {
 	BaseDir     string
 	DownloadDir string
+
+	Assembler assembler.Service
+	PieceMgr  pieces.Service
 }
 
 func NewService(cfg Config, emitter chan interface{}) Service {
@@ -148,5 +175,7 @@ func NewService(cfg Config, emitter chan interface{}) Service {
 		baseDir:     cfg.BaseDir,
 		downloadDir: cfg.DownloadDir,
 		emitter:     emitter,
+		assembler:   cfg.Assembler,
+		pieceMgr:    cfg.PieceMgr,
 	}
 }

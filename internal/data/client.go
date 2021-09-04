@@ -6,11 +6,10 @@ import (
 	"math/rand"
 	"os"
 	"path"
-	"regexp"
-	"strconv"
-	"strings"
 	"time"
 
+	"github.com/namvu9/bitsy/internal/assembler"
+	"github.com/namvu9/bitsy/internal/pieces"
 	"github.com/namvu9/bitsy/pkg/bits"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
@@ -18,7 +17,7 @@ import (
 
 type ClientState int
 
-const MAX_PENDING_PIECES = 100
+const MAX_PENDING_PIECES = 50
 
 const (
 	STOPPED ClientState = iota
@@ -64,7 +63,6 @@ type Client struct {
 	StateCh chan interface{}
 	emitCh  chan interface{}
 
-	// SwarmCh
 	pieces        bits.BitField
 	ignoredPieces bits.BitField
 	filesWritten  map[string]bool
@@ -84,7 +82,8 @@ type Client struct {
 
 	workers map[int]*worker
 
-	repo PieceService
+	pieceMgr  pieces.Service
+	assembler assembler.Service
 }
 
 func (c *Client) Stop() error {
@@ -111,7 +110,7 @@ func (c *Client) Start(ctx context.Context) error {
 		}
 	}
 
-	err := c.assembleTorrent(path.Join(c.outDir, c.torrent.Name()))
+	err := c.assembler.Assemble(c.torrent.InfoHash())
 	if err != nil {
 		fmt.Println("ERR", err)
 		return err
@@ -222,11 +221,11 @@ func (c *Client) download() {
 				}
 			}
 
-			err := c.assembleTorrent(path.Join(c.outDir, c.torrent.Name()))
+			err := c.assembler.Assemble(c.torrent.InfoHash())
 			if err != nil {
 				fmt.Println("ERR ASSEMBLING", err)
 			}
-
+			
 			if c.done() {
 				c.emit(StateChange{To: SEEDING})
 			}
@@ -234,33 +233,6 @@ func (c *Client) download() {
 			c.DownloadRate = btorrent.Size(downloadRate)
 		}
 	}
-}
-
-func (c *Client) anyFileDone() bool {
-	for i := range c.torrent.Files() {
-		if c.fileDone(i) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (c *Client) fileDone(idx int) bool {
-	file := c.torrent.Files()[idx]
-
-	for _, piece := range file.Pieces {
-		pcIdx := c.torrent.GetPieceIndex(piece)
-		if pcIdx < 0 {
-			return false
-		}
-
-		if !c.pieces.Get(pcIdx) {
-			return false
-		}
-	}
-
-	return true
 }
 
 func (c *Client) done() bool {
@@ -318,6 +290,10 @@ func (c *Client) downloadPiece(index uint32, fast bool) *worker {
 		return nil
 	}
 
+	if len(c.workers) > MAX_PENDING_PIECES {
+		return nil
+	}
+
 	var (
 		t           = c.torrent
 		size        = t.Length()
@@ -345,6 +321,8 @@ func (c *Client) downloadPiece(index uint32, fast bool) *worker {
 
 		out:  c.MsgOut,
 		fast: fast,
+
+		pieceMgr: c.pieceMgr,
 	}
 
 	w.run()
@@ -356,60 +334,21 @@ func (c *Client) downloadPiece(index uint32, fast bool) *worker {
 
 // Verify which pieces the client has
 func (c *Client) verifyPieces() error {
-	var (
-		hexHash    = c.torrent.HexHash()
-		torrentDir = path.Join(c.baseDir, hexHash)
-	)
-
-	err := os.MkdirAll(torrentDir, 0777)
-	if err != nil {
-		return err
-	}
-
-	files, err := os.ReadDir(torrentDir)
-	if err != nil {
-		return err
-	}
-
-	for _, file := range files {
-		var (
-			matchString = fmt.Sprintf(`(\d+).part`)
-			re          = regexp.MustCompile(matchString)
-			name        = strings.ToLower(file.Name())
-		)
-
-		if re.MatchString(name) {
-			var (
-				matches = re.FindStringSubmatch(name)
-				index   = matches[1]
-			)
-			n, err := strconv.Atoi(index)
-			if err != nil {
-				return err
-			}
-
-			piecePath := path.Join(torrentDir, file.Name())
-			if ok := c.loadAndVerify(n, piecePath); ok {
-				c.pieces.Set(n)
-			}
+	for idx := range c.torrent.Pieces() {
+		piece, err := c.pieceMgr.Load(c.torrent.InfoHash(), idx)
+		if err != nil {
+			return err
 		}
+
+		err = c.pieceMgr.Verify(c.torrent.InfoHash(), idx, piece)
+		if err != nil {
+			return err
+		}
+
+		c.pieces.Set(idx)
 	}
 
 	return nil
-}
-
-// Load a piece and verify its contents
-func (c *Client) loadAndVerify(index int, location string) bool {
-	piece, err := os.ReadFile(location)
-	if err != nil {
-		return false
-	}
-
-	if !c.torrent.VerifyPiece(index, piece) {
-		return false
-	}
-
-	return true
 }
 
 type Option func(*Client)
@@ -438,7 +377,7 @@ func WithFiles(fileIdx ...int) Option {
 	}
 }
 
-func New(t btorrent.Torrent, baseDir, outDir string, emitter chan interface{}, options ...Option) *Client {
+func New(t btorrent.Torrent, baseDir, outDir string, emitter chan interface{}, pieceMgr pieces.Service, assembler assembler.Service, options ...Option) *Client {
 	nPieces := len(t.Pieces())
 	c := &Client{
 		baseDir:       baseDir,
@@ -456,6 +395,8 @@ func New(t btorrent.Torrent, baseDir, outDir string, emitter chan interface{}, o
 		ignoredPieces: bits.NewBitField(nPieces),
 		pieces:        bits.NewBitField(nPieces),
 		workers:       make(map[int]*worker),
+		pieceMgr:      pieceMgr,
+		assembler:     assembler,
 	}
 
 	for _, opt := range options {

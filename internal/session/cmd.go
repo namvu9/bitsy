@@ -1,7 +1,7 @@
 package session
 
 import (
-	"github.com/namvu9/bitsy/internal/session/data"
+	"github.com/namvu9/bitsy/internal/data"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 )
 

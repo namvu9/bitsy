@@ -22,8 +22,8 @@ import (
 	"path"
 	"time"
 
+	"github.com/namvu9/bitsy/internal/data"
 	"github.com/namvu9/bitsy/internal/session"
-	"github.com/namvu9/bitsy/internal/session/data"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/spf13/cobra"
 )
@@ -79,16 +79,6 @@ bitsy download -f 0 /path/to/torrent
 bitsy download /path/to/torrent
 `,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("Forwarding port... ")
-
-		// TODO: use port from config
-		port, err := session.ForwardPorts(6881, 6889)
-		if err != nil {
-			fmt.Println("Failed to find open port", err)
-			return
-		}
-		fmt.Println(port)
-
 		baseDir, err := BaseDir()
 		if err != nil {
 			fmt.Println(err)
@@ -106,7 +96,7 @@ bitsy download /path/to/torrent
 			DownloadDir:    downloadDir,
 			MaxConnections: 50,
 			IP:             "192.168.0.4",
-			Port:           port,
+			Ports:           []uint16{6881},
 		})
 
 		opts := []data.Option{}
@@ -127,7 +117,7 @@ bitsy download /path/to/torrent
 			fmt.Printf("Fetching metadata... ")
 			if _, ok := t.Info(); !ok {
 				ctx, cancel := withTimeout(context.Background(), 10*time.Second)
-				t2, err := getMeta(ctx, t, port)
+				t2, err := getMeta(ctx, t, 6881)
 				if err != nil {
 					cancel()
 					return

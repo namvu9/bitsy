@@ -99,11 +99,6 @@ func (cs *connectionService) Init(ctx context.Context) error {
 				continue
 			}
 
-			if _, ok := cs.hosts[conn.RemoteAddr()]; ok {
-				conn.Close()
-				continue
-			}
-
 			select {
 			case cs.conns <- struct{}{}:
 				cs.lock.Lock()

@@ -5,5 +5,5 @@ type Config struct {
 	DownloadDir    string // Where to write the completed files to
 	MaxConnections int
 	IP             string
-	Port           uint16
+	Ports          []uint16
 }

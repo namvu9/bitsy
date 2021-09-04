@@ -2,11 +2,10 @@ package data
 
 import (
 	"fmt"
-	"os"
-	"path"
 	"sync"
 	"time"
 
+	"github.com/namvu9/bitsy/internal/pieces"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
 )
@@ -40,6 +39,8 @@ type worker struct {
 	lock        sync.Mutex
 
 	fast bool
+
+	pieceMgr pieces.Service
 }
 
 func (w *worker) idle() bool {
@@ -145,28 +146,10 @@ func (w *worker) requestSubPiece(index uint32, offset uint32, fast bool) error {
 }
 
 func (c *worker) savePiece(index int, data []byte) error {
-	s := c.torrent
-	ok := s.VerifyPiece(index, data)
-	if !ok {
-		return fmt.Errorf("failed to save piece %d, verification failed", index)
-	}
-
-	// Create directory if it doesn't exist
-	err := os.MkdirAll(c.baseDir, 0777)
+	err := c.pieceMgr.Verify(c.torrent.InfoHash(), index, data)
 	if err != nil {
 		return err
 	}
 
-	filePath := path.Join(c.baseDir, s.HexHash(), fmt.Sprintf("%d.part", index))
-	file, err := os.Create(filePath)
-	if err != nil {
-		return err
-	}
-
-	_, err = file.Write(data)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return c.pieceMgr.Save(c.torrent.InfoHash(), index, data)
 }
