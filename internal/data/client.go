@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"os"
-	"path"
 	"time"
 
 	"github.com/namvu9/bitsy/internal/assembler"
@@ -104,14 +102,6 @@ func (c *Client) Start(ctx context.Context) error {
 		c.emit(StateChange{To: ERROR, Msg: err.Error()})
 		return err
 	}
-
-	for _, file := range c.torrent.Files() {
-		filePath := path.Join(c.outDir, c.torrent.Name(), file.Name)
-		if _, err := os.Stat(filePath); err == nil {
-			c.filesWritten[file.Name] = true
-		}
-	}
-	
 
 	err := c.assembler.Assemble(c.torrent.InfoHash(), c.pieces)
 	if err != nil {

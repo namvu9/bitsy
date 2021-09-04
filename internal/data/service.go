@@ -59,6 +59,11 @@ func (ds *dataService) Init(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+
+		err = os.MkdirAll(path.Join(ds.downloadDir, t.Name()), 0777)
+		if err != nil {
+			return err
+		}
 	}
 
 	err := ds.assembler.Init()
