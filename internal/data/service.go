@@ -3,6 +3,8 @@ package data
 import (
 	"context"
 	"fmt"
+	"os"
+	"path"
 
 	"github.com/namvu9/bitsy/internal/assembler"
 	"github.com/namvu9/bitsy/internal/pieces"
@@ -51,6 +53,14 @@ func (ds *dataService) Stat(hash InfoHash) ClientStat {
 }
 
 func (ds *dataService) Init(ctx context.Context) error {
+	for _, t := range ds.torrents {
+		torrentDir := path.Join(ds.baseDir, t.HexHash())
+		err := os.MkdirAll(torrentDir, 0777)
+		if err != nil {
+			return err
+		}
+	}
+
 	err := ds.assembler.Init()
 	if err != nil {
 		return err
@@ -132,7 +142,7 @@ func (ds *dataService) Status(hash InfoHash) (ClientState, error) {
 		return ERROR, fmt.Errorf("unknown info hash %v", hash)
 	}
 
-	return c.state, nil
+	return c.state, c.err
 }
 
 func (ds *dataService) SetPriority(hash InfoHash, ranks []int) error {

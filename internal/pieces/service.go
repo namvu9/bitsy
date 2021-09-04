@@ -44,8 +44,6 @@ func (pm *pieceManager) Save(hash [20]byte, idx int, data []byte) error {
 }
 
 func (pm *pieceManager) Load(hash [20]byte, idx int) ([]byte, error) {
-	fmt.Println("PIECE MGR: LOAD", idx)
-
 	t, ok := pm.torrents[hash]
 	if !ok {
 		return []byte{}, fmt.Errorf("unknown hash: %x", hash)
@@ -89,14 +87,6 @@ func (pm *pieceManager) Register(t btorrent.Torrent) {
 }
 
 func (pm *pieceManager) Init() error {
-	for _, t := range pm.torrents {
-		torrentDir := path.Join(pm.baseDir, t.HexHash())
-		err := os.MkdirAll(torrentDir, 0777)
-		if err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 

@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -84,6 +85,7 @@ type Client struct {
 
 	pieceMgr  pieces.Service
 	assembler assembler.Service
+	err       error
 }
 
 func (c *Client) Stop() error {
@@ -109,11 +111,11 @@ func (c *Client) Start(ctx context.Context) error {
 			c.filesWritten[file.Name] = true
 		}
 	}
+	
 
-	err := c.assembler.Assemble(c.torrent.InfoHash())
+	err := c.assembler.Assemble(c.torrent.InfoHash(), c.pieces)
 	if err != nil {
 		fmt.Println("ERR", err)
-		return err
 	}
 
 	go c.listen()
@@ -221,11 +223,11 @@ func (c *Client) download() {
 				}
 			}
 
-			err := c.assembler.Assemble(c.torrent.InfoHash())
+			err := c.assembler.Assemble(c.torrent.InfoHash(), c.pieces)
 			if err != nil {
 				fmt.Println("ERR ASSEMBLING", err)
 			}
-			
+
 			if c.done() {
 				c.emit(StateChange{To: SEEDING})
 			}
@@ -277,6 +279,11 @@ func (c *Client) emit(e ClientEvent) {
 	switch v := e.(type) {
 	case StateChange:
 		c.state = v.To
+		if v.To == ERROR {
+			c.err = errors.New(v.Msg)
+		} else {
+			c.err = nil
+		}
 	case DownloadEvent:
 		c.Pending = v.Pending
 	}
@@ -337,7 +344,7 @@ func (c *Client) verifyPieces() error {
 	for idx := range c.torrent.Pieces() {
 		piece, err := c.pieceMgr.Load(c.torrent.InfoHash(), idx)
 		if err != nil {
-			return err
+			continue
 		}
 
 		err = c.pieceMgr.Verify(c.torrent.InfoHash(), idx, piece)

@@ -6,12 +6,13 @@ import (
 	"os"
 	"path"
 
+	"github.com/namvu9/bitsy/pkg/bits"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 )
 
 type Service interface {
 	Register(btorrent.Torrent)
-	Assemble([20]byte) error
+	Assemble([20]byte, bits.BitField) error
 	Init() error
 }
 
@@ -49,12 +50,29 @@ func (a *assembler) getTorrent(hash [20]byte) (btorrent.Torrent, bool) {
 	return t, ok
 }
 
-func (a *assembler) fileDone(t btorrent.Torrent, i int) bool {
-	file := t.Files()[i]
+func (a *assembler) Register(t btorrent.Torrent) {
+	a.torrents[t.InfoHash()] = t
+}
 
-	for _, piece := range file.Pieces {
-		pcIdx := t.GetPieceIndex(piece)
-		if pcIdx < 0 {
+func (ass *assembler) Assemble(hash [20]byte, pieces bits.BitField) error {
+	t, ok := ass.torrents[hash]
+	if !ok {
+		return fmt.Errorf("unknown hash: %x", hash)
+	}
+
+	return ass.assembleTorrent(t, pieces, ass.downloadDir)
+}
+
+func (a *assembler) fileDone(t btorrent.Torrent, idx int, pieces bits.BitField) bool {
+	file := t.Files()[idx]
+
+	for _, hash := range file.Pieces {
+		pieceIdx := t.GetPieceIndex(hash)
+		if pieceIdx < 0 {
+			return false
+		}
+
+		if !pieces.Get(pieceIdx) {
 			return false
 		}
 	}
@@ -62,28 +80,15 @@ func (a *assembler) fileDone(t btorrent.Torrent, i int) bool {
 	return true
 }
 
-func (a *assembler) Register(t btorrent.Torrent) {
-	a.torrents[t.InfoHash()] = t
-}
-
-func (ass *assembler) Assemble(hash [20]byte) error {
-	t, ok := ass.torrents[hash]
-	if !ok {
-		return fmt.Errorf("unknown hash: %x", hash)
-	}
-
-	return ass.assembleTorrent(t, ass.downloadDir)
-}
-
-func (ass *assembler) assembleTorrent(t btorrent.Torrent, dstDir string) error {
+func (ass *assembler) assembleTorrent(t btorrent.Torrent, pieces bits.BitField, dstDir string) error {
 	err := os.MkdirAll(dstDir, 0777)
 	if err != nil {
 		return err
 	}
 
 	offset := 0
-	for i, file := range t.Files() {
-		if ass.written[file.Name] || !ass.fileDone(t, i) {
+	for idx, file := range t.Files() {
+		if ass.written[file.Name] || !ass.fileDone(t, idx, pieces) {
 			offset += int(file.Length)
 			continue
 		}
@@ -156,7 +161,7 @@ func (c *assembler) assembleFile(t btorrent.Torrent, startIndex int, localOffset
 		if err != nil {
 			return totalWritten, err
 		}
-		
+
 		// load next piece
 		index++
 		if index < len(t.Pieces()) {

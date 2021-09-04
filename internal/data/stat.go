@@ -31,6 +31,7 @@ func (fs FileStat) String() string {
 
 type ClientStat struct {
 	State        ClientState
+	Error        error
 	Pieces       int
 	TotalPieces  int
 	DownloadRate btorrent.Size // per second
@@ -105,6 +106,7 @@ func (c *Client) Stat() ClientStat {
 
 	return ClientStat{
 		State:        c.state,
+		Error:        c.err,
 		Uploaded:     btorrent.Size(c.Uploaded),
 		Downloaded:   btorrent.Size(c.pieces.GetSum() * int(c.torrent.PieceLength())),
 		DownloadRate: c.DownloadRate,

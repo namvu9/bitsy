@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/namvu9/bitsy/internal/data"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 )
 
@@ -24,7 +25,6 @@ func sortByValue(x map[int]int) []freq {
 		return out[i].freq < out[j].freq
 	})
 
-
 	return out
 }
 
@@ -41,7 +41,11 @@ func (s *Session) stat() {
 		fmt.Fprintln(&sb, torrent.Name())
 
 		clientStat := s.data.Stat(hash)
-		fmt.Fprintf(&sb, "State: %s\n", clientStat.State)
+		if clientStat.State == data.ERROR {
+			fmt.Fprintf(&sb, "State: %s (%s)\n", clientStat.State, clientStat.Error)
+		} else {
+			fmt.Fprintf(&sb, "State: %s\n", clientStat.State)
+		}
 		fmt.Fprintf(&sb, "Uploaded: %s\n", clientStat.Uploaded)
 		fmt.Fprintf(&sb, "Downloaded: %s / %s\n", min(clientStat.Downloaded, torrent.Length()), torrent.Length())
 		fmt.Fprintf(&sb, "Download rate: %s / s\n", clientStat.DownloadRate)
@@ -56,7 +60,6 @@ func (s *Session) stat() {
 		}
 
 		fmt.Fprintln(&sb, s.peers.Swarms()[hash])
-		//fmt.Fprintln(&sb, sortByValue(pieceFreq))
 		clear()
 		fmt.Println(sb.String())
 	}

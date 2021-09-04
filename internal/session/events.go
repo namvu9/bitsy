@@ -119,7 +119,12 @@ func (s *Session) handleNewConn(ev conn.NewConnEvent) {
 		return
 	}
 
-	if status == data.PAUSED || status == data.ERROR {
+	if status == data.PAUSED {
+		p.Close("Torrent Paused")
+		return
+	}
+
+	if status == data.ERROR {
 		p.Close(err.Error())
 		return
 	}
