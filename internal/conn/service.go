@@ -18,6 +18,7 @@ type Service interface {
 	Unregister(btorrent.Torrent)
 
 	Init(context.Context) error
+	Stat() int
 }
 
 type connectionService struct {
@@ -105,7 +106,7 @@ func (cs *connectionService) Init(ctx context.Context) error {
 				err = cs.acceptHandshake(conn)
 				if err != nil {
 					conn.Close()
-					<- cs.conns
+					<-cs.conns
 					continue
 				}
 			default:
@@ -145,6 +146,10 @@ func (cs *connectionService) acceptHandshake(conn net.Conn) error {
 	cs.emitter <- NewConnEvent{Peer: p, Hash: torrent.InfoHash()}
 
 	return nil
+}
+
+func (cs *connectionService) Stat() int {
+	return len(cs.conns)
 }
 
 type Config struct {

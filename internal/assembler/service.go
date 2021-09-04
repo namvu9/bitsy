@@ -118,7 +118,7 @@ func (asb *assembler) assembleFile(t btorrent.Torrent, fileIdx int, w io.Writer)
 		if left < pieceLen {
 			data = piece[offset : offset+left]
 		} else {
-			data = piece[offset : offset+pieceLen]
+			data = piece[offset:]
 		}
 
 		n, err := w.Write(data)
@@ -149,4 +149,3 @@ func NewService(cfg Config) Service {
 		pieceMgr:    cfg.PieceMgr,
 	}
 }
-

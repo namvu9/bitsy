@@ -115,7 +115,7 @@ func getMeta(ctx context.Context, t *btorrent.Torrent, port uint16) (*btorrent.T
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
-		for stat := range announce(ctx, t, port) {
+		for stat := range announce(ctx, t, port, 0) {
 			if len(stat.Peers) == 0 {
 				continue
 			}
@@ -164,11 +164,11 @@ func log(fmtString string, args ...interface{}) {
 	os.Stderr.WriteString(fmt.Sprintf(fmtString, args...))
 }
 
-func announce(ctx context.Context, t *btorrent.Torrent, port uint16) chan tracker.TrackerStat {
+func announce(ctx context.Context, t *btorrent.Torrent, port uint16, downloaded uint64) chan tracker.TrackerStat {
 	var (
 		tiers = t.AnnounceList()
 		out   = make(chan tracker.TrackerStat, 10)
-		req   = tracker.NewRequest(t.InfoHash(), port, session.PeerID)
+		req   = tracker.NewRequest(t.InfoHash(), port, session.PeerID, downloaded)
 	)
 
 	go func() {

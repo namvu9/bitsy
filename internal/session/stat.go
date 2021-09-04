@@ -39,6 +39,7 @@ func (s *Session) stat() {
 	for hash, torrent := range s.torrents {
 		var sb strings.Builder
 		fmt.Fprintln(&sb, torrent.Name())
+		fmt.Fprintln(&sb, torrent.HexHash())
 
 		clientStat := s.data.Stat(hash)
 		if clientStat.State == data.ERROR {
@@ -46,6 +47,7 @@ func (s *Session) stat() {
 		} else {
 			fmt.Fprintf(&sb, "State: %s\n", clientStat.State)
 		}
+		fmt.Fprintf(&sb, "Connections: %d\n", s.conn.Stat())
 		fmt.Fprintf(&sb, "Uploaded: %s\n", clientStat.Uploaded)
 		fmt.Fprintf(&sb, "Downloaded: %s / %s\n", min(clientStat.Downloaded, torrent.Length()), torrent.Length())
 		fmt.Fprintf(&sb, "Download rate: %s / s\n", clientStat.DownloadRate)

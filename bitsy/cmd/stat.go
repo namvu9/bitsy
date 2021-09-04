@@ -59,7 +59,7 @@ bitsy stat /path/to/file.torrent
 			gotMeta = true
 		}
 
-		for stat := range announce(ctx, t, 1337) {
+		for stat := range announce(ctx, t, 1337, 0) {
 			seeders += stat.Seeders
 			leechers += stat.Leechers
 			count++

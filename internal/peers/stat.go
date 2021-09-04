@@ -34,7 +34,7 @@ func (s SwarmStat) String() string {
 		for _, req := range p.Requests {
 			uniquePieces[int(req.Index)]++
 		}
-		fmt.Fprintf(&sb, "%d: %s (%d pieces, %d requests) %s / s (Total: %s)\n", idx, p.RemoteAddr(), len(uniquePieces), len(p.Requests), btorrent.Size(p.UploadRate), btorrent.Size(p.Uploaded))
+		fmt.Fprintf(&sb, "%d: %s (%d pieces, %d requests, idle: %v) %s / s (Total: %s)\n", idx, p.RemoteAddr(), len(uniquePieces), len(p.Requests), p.Idle(), btorrent.Size(p.UploadRate), btorrent.Size(p.Uploaded))
 	}
 
 	fmt.Fprintln(&sb, "Top 5 Downloaders:")

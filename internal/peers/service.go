@@ -1,8 +1,10 @@
 package peers
 
 import (
+	"math/rand"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
@@ -20,6 +22,10 @@ type GetResponse struct {
 	Peers []*peer.Peer
 }
 
+type Stat struct {
+	Downloaded uint64
+}
+
 type Service interface {
 	Get(InfoHash, GetRequest) GetResponse
 	Add(InfoHash, *peer.Peer)
@@ -30,7 +36,7 @@ type Service interface {
 
 	// Return info for peers that aren't currently in the
 	// swarm
-	Discover(InfoHash, int) []tracker.PeerInfo
+	Discover(InfoHash, int, Stat) []tracker.PeerInfo
 	Swarms() map[InfoHash]SwarmStat
 }
 type InfoHash = [20]byte
@@ -45,10 +51,10 @@ type peerService struct {
 	lock   sync.Mutex
 }
 
-func (service *peerService) getPeersSorted(hash InfoHash, orderBy OrderByFunc) []*peer.Peer {
+func (svc *peerService) getPeersSorted(hash InfoHash, orderBy OrderByFunc) []*peer.Peer {
 	var cpy []*peer.Peer
 
-	for _, peer := range service.peers[hash] {
+	for _, peer := range svc.peers[hash] {
 		cpy = append(cpy, peer)
 	}
 
@@ -61,8 +67,8 @@ func (service *peerService) getPeersSorted(hash InfoHash, orderBy OrderByFunc) [
 	return cpy
 }
 
-func (service *peerService) Get(hash InfoHash, req GetRequest) GetResponse {
-	sorted := service.getPeersSorted(hash, req.OrderBy)
+func (svc *peerService) Get(hash InfoHash, req GetRequest) GetResponse {
+	sorted := svc.getPeersSorted(hash, req.OrderBy)
 
 	var out []*peer.Peer
 	for _, p := range sorted {
@@ -80,11 +86,11 @@ func (service *peerService) Get(hash InfoHash, req GetRequest) GetResponse {
 	return GetResponse{Peers: out}
 }
 
-func (service *peerService) Swarms() map[InfoHash]SwarmStat {
+func (svc *peerService) Swarms() map[InfoHash]SwarmStat {
 	out := make(map[InfoHash]SwarmStat)
 
-	for hash, peers := range service.peers {
-		sorted := service.getPeersSorted(hash, func(p1, p2 *peer.Peer) bool {
+	for hash, peers := range svc.peers {
+		sorted := svc.getPeersSorted(hash, func(p1, p2 *peer.Peer) bool {
 			if p1.UploadRate > p2.UploadRate {
 				return true
 			}
@@ -104,7 +110,7 @@ func (service *peerService) Swarms() map[InfoHash]SwarmStat {
 			stat.TopPeers = sorted[:5]
 		}
 
-		sorted = service.getPeersSorted(hash, func(p1, p2 *peer.Peer) bool {
+		sorted = svc.getPeersSorted(hash, func(p1, p2 *peer.Peer) bool {
 			return p1.Downloaded > p2.Downloaded
 		})
 
@@ -143,15 +149,15 @@ func (service *peerService) Swarms() map[InfoHash]SwarmStat {
 	return out
 }
 
-func (service *peerService) Add(hash InfoHash, p *peer.Peer) {
-	service.lock.Lock()
-	defer service.lock.Unlock()
+func (svc *peerService) Add(hash InfoHash, p *peer.Peer) {
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
 
 	if p.Closed() {
 		return
 	}
 
-	s, ok := service.peers[hash]
+	s, ok := svc.peers[hash]
 	if !ok {
 		return
 	}
@@ -162,7 +168,7 @@ func (service *peerService) Add(hash InfoHash, p *peer.Peer) {
 
 	go func() {
 		for msg := range p.Msg {
-			service.emitter <- MessageReceived{
+			svc.emitter <- MessageReceived{
 				Peer: p,
 				Hash: hash,
 				Msg:  msg,
@@ -171,10 +177,10 @@ func (service *peerService) Add(hash InfoHash, p *peer.Peer) {
 	}()
 }
 
-func (service *peerService) Remove(hash InfoHash, p *peer.Peer) {
-	service.lock.Lock()
-	defer service.lock.Unlock()
-	s, ok := service.peers[hash]
+func (svc *peerService) Remove(hash InfoHash, p *peer.Peer) {
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
+	s, ok := svc.peers[hash]
 	if !ok {
 		return
 	}
@@ -182,34 +188,41 @@ func (service *peerService) Remove(hash InfoHash, p *peer.Peer) {
 	delete(s, p.RemoteAddr().String())
 }
 
-func (service *peerService) Register(t btorrent.Torrent) {
-	_, ok := service.peers[t.InfoHash()]
+func (svc *peerService) Register(t btorrent.Torrent) {
+	_, ok := svc.peers[t.InfoHash()]
 	if ok {
 		return
 	}
 
-	service.peers[t.InfoHash()] = make(map[string]*peer.Peer)
+	svc.peers[t.InfoHash()] = make(map[string]*peer.Peer)
 
 	for _, tier := range t.AnnounceList() {
-		service.trackers[t.InfoHash()] = append(service.trackers[t.InfoHash()], tracker.NewGroup(tier))
+		svc.trackers[t.InfoHash()] = append(svc.trackers[t.InfoHash()], tracker.NewGroup(tier))
 	}
 }
 
-func (service *peerService) Unregister(InfoHash) {}
+func (svc *peerService) Unregister(InfoHash) {}
 
-func (service *peerService) Discover(hash InfoHash, limit int) []tracker.PeerInfo {
-	tg, ok := service.trackers[hash]
+func (svc *peerService) Discover(hash InfoHash, limit int, stat Stat) []tracker.PeerInfo {
+	tg, ok := svc.trackers[hash]
 	if !ok {
 		return []tracker.PeerInfo{}
 	}
 
 	var out []tracker.PeerInfo
 	group := tg[0]
-	for _, p := range group.Announce(tracker.NewRequest(hash, service.port, service.peerID)) {
+	for _, p := range group.Announce(tracker.NewRequest(hash, svc.port, svc.peerID, stat.Downloaded)) {
 		out = append(out, p)
 	}
 
+	shuffle(out)
+
 	return out
+}
+
+func shuffle(a []tracker.PeerInfo) {
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(a), func(i, j int) { a[i], a[j] = a[j], a[i] })
 }
 
 type Config struct {

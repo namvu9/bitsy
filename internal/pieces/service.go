@@ -9,16 +9,14 @@ import (
 )
 
 type Service interface {
-	Verify([20]byte, int, []byte) error
-
-	Save([20]byte, int, []byte) error
 
 	// Load reads the specified piece into memory and returns
 	// it
 	Load([20]byte, int) ([]byte, error)
-
 	Init() error
 	Register(btorrent.Torrent)
+	Save([20]byte, int, []byte) error
+	Verify([20]byte, int, []byte) error
 }
 
 // TODO: Make safe for concurrent use

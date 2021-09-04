@@ -178,7 +178,7 @@ func (c *Client) download() {
 		batch        = 0
 	)
 
-	c.downloadN(5)
+	c.downloadN(10)
 
 	for {
 		select {
@@ -190,7 +190,7 @@ func (c *Client) download() {
 
 			if done {
 				if len(c.workers) < MAX_PENDING_PIECES {
-					c.downloadN(1)
+					c.downloadN(2)
 				}
 				continue
 			}

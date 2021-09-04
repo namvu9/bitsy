@@ -3,7 +3,9 @@ package session
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"net"
+	"time"
 
 	"github.com/namvu9/bitsy/internal/conn"
 	"github.com/namvu9/bitsy/internal/data"
@@ -26,7 +28,7 @@ func (s *Session) handleDownloadCompleteEvent(ev data.DownloadCompleteEvent) {
 
 func (s *Session) handleRequestMessage(msg data.RequestMessage) {
 	res := s.peers.Get(msg.Hash, peers.GetRequest{
-		Limit: 2,
+		Limit: 5,
 		OrderBy: func(p1, p2 *peer.Peer) bool {
 			if p1.UploadRate > p2.UploadRate {
 				return true
@@ -51,9 +53,16 @@ func (s *Session) handleRequestMessage(msg data.RequestMessage) {
 		},
 	})
 
-	for _, p := range res.Peers {
-		go p.Send(msg.RequestMessage)
+	shuffle(res.Peers)
+
+	if len(res.Peers) > 0 {
+		go res.Peers[0].Send(msg.RequestMessage)
 	}
+}
+
+func shuffle(a []*peer.Peer) {
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(a), func(i, j int) { a[i], a[j] = a[j], a[i] })
 }
 
 var pieceFreq = make(map[int]int)

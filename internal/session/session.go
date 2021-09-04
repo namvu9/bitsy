@@ -19,6 +19,7 @@ import (
 	"github.com/namvu9/bitsy/internal/ports"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
+	"github.com/namvu9/bitsy/pkg/btorrent/tracker"
 )
 
 var PeerID = [20]byte{'-', 'B', 'T', '0', '0', '0', '0', '-'}
@@ -167,8 +168,10 @@ func (s *Session) heartbeat(ctx context.Context) {
 func (s *Session) fillSwarms() {
 	for hash, stat := range s.peers.Swarms() {
 		if stat.Peers < 30 {
-			want := 30 - stat.Peers
-			pInfo := s.peers.Discover(hash, 30)
+			stat := s.data.Stat(hash)
+			pInfo := s.peers.Discover(hash, 100, peers.Stat{
+				Downloaded: uint64(stat.Downloaded),
+			})
 			cfg := peer.DialConfig{
 				PStr:       PStr,
 				InfoHash:   hash,
@@ -177,16 +180,14 @@ func (s *Session) fillSwarms() {
 				Timeout:    500 * time.Millisecond,
 			}
 			for _, p := range pInfo {
-				if want == 0 {
-					return
-				}
+				go func(p tracker.PeerInfo) {
+					addr := &net.TCPAddr{IP: p.IP, Port: int(p.Port)}
+					_, err := s.conn.Dial(addr, cfg)
+					if err != nil {
+						return
+					}
+				}(p)
 
-				addr := &net.TCPAddr{IP: p.IP, Port: int(p.Port)}
-				_, err := s.conn.Dial(addr, cfg)
-				if err != nil {
-					continue
-				}
-				want--
 			}
 		}
 	}
@@ -261,6 +262,7 @@ func New(cfg Config) *Session {
 	var assemblerCfg = assembler.Config{
 		BaseDir:     cfg.BaseDir,
 		DownloadDir: cfg.DownloadDir,
+		PieceMgr:    pieceMgr,
 	}
 	assemblerService := assembler.NewService(assemblerCfg)
 

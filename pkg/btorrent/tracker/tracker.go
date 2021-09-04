@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +39,8 @@ type TrackerGroup struct {
 	peerID   [20]byte
 
 	Port uint16
+
+	lastResponse map[string]PeerInfo
 }
 
 type TrackerStat struct {
@@ -116,7 +120,6 @@ func (tg *TrackerGroup) Announce(req Request) map[string]PeerInfo {
 		go func(tracker Tracker) {
 			if !tracker.ShouldAnnounce() {
 				wg.Done()
-				// TODO: Return last response
 				return
 			}
 
@@ -143,6 +146,14 @@ func (tg *TrackerGroup) Announce(req Request) map[string]PeerInfo {
 			count++
 			out[string(peer.IP.To16())] = peer
 		}
+	}
+
+	if len(out) == 0 {
+		return tg.lastResponse
+	}
+
+	if len(out) > len(tg.lastResponse) {
+		tg.lastResponse = out
 	}
 
 	return out
@@ -193,6 +204,18 @@ type Request struct {
 	Port       uint16
 }
 
+func (req Request) String() string {
+	var sb strings.Builder
+
+	fmt.Fprintln(&sb, "UDP Announce Request")
+	fmt.Fprintf(&sb, "%x\n", req.Hash)
+	fmt.Fprintf(&sb, "PeerID: %s\n", req.PeerID)
+	fmt.Fprintf(&sb, "Port: %d\n", req.Port)
+	fmt.Fprintf(&sb, "Downloaded: %d\n", req.Downloaded)
+
+	return sb.String()
+}
+
 type UDPRequest struct {
 	ConnID uint64
 	Action uint32
@@ -201,12 +224,13 @@ type UDPRequest struct {
 	Request
 }
 
-func NewRequest(hash [20]byte, port uint16, peerID [20]byte) Request {
+func NewRequest(hash [20]byte, port uint16, peerID [20]byte, downloaded uint64) Request {
 	return Request{
-		Want:   -1,
-		PeerID: peerID,
-		Hash:   hash,
-		Port:   port,
+		Want:       -1,
+		PeerID:     peerID,
+		Hash:       hash,
+		Port:       port,
+		Downloaded: downloaded,
 	}
 }
 
