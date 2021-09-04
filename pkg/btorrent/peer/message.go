@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-
-	"github.com/namvu9/bitsy/internal/errors"
 )
 
 // BitTorrent message types
@@ -461,8 +459,8 @@ func UnmarshalCancelMessage(data []byte) (CancelMessage, error) {
 	var msg CancelMessage
 
 	if got := len(data); got != 12 {
-		err := errors.Newf("payload length, want %d but got %d", 12, got)
-		return msg, errors.Wrap(err, errors.BadArgument)
+		err := fmt.Errorf("payload length, want %d but got %d", 12, got)
+		return msg, err
 	}
 
 	msg.Index = binary.BigEndian.Uint32(data[:4])
@@ -476,8 +474,8 @@ func UnmarshalRejectRequestMsg(data []byte) (RejectRequestMsg, error) {
 	var msg RejectRequestMsg
 
 	if got := len(data); got != 12 {
-		err := errors.Newf("payload length, want %d but got %d", 12, got)
-		return msg, errors.Wrap(err, errors.BadArgument)
+		err := fmt.Errorf("payload length, want %d but got %d", 12, got)
+		return msg, err
 	}
 
 	msg.Index = binary.BigEndian.Uint32(data[:4])

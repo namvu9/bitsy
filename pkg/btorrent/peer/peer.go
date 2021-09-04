@@ -2,14 +2,15 @@ package peer
 
 import (
 	"context"
+	"errors"
 	stderrors "errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"time"
 
 	"github.com/namvu9/bencode"
-	"github.com/namvu9/bitsy/internal/errors"
 	"github.com/namvu9/bitsy/pkg/bits"
 )
 
@@ -150,7 +151,7 @@ func (p *Peer) write(data []byte) (int, error) {
 
 	n, err := p.Conn.Write(data)
 	if err != nil {
-		return n, errors.Wrap(err, errors.Network)
+		return n, err
 	}
 
 	return n, nil
@@ -187,7 +188,7 @@ func (p *Peer) Listen(ctx context.Context) {
 		msg, err := UnmarshallMessage(p.Conn)
 		p.LastMessageReceived = time.Now()
 
-		if err != nil && errors.IsEOF(err) {
+		if err != nil && errors.Is(err, io.EOF) {
 			p.Close(err.Error())
 			return
 		}

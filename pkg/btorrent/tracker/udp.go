@@ -2,14 +2,13 @@ package tracker
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
 	"net"
 	"net/url"
 	"time"
-
-	"github.com/namvu9/bitsy/internal/errors"
 )
 
 type UDPTracker struct {
@@ -35,12 +34,10 @@ func (tr *UDPTracker) Stat() TrackerStat {
 }
 
 func (tr *UDPTracker) Announce(req Request) (*Response, error) {
-	var op errors.Op = "tracker.UDPAnnounce"
-
 	connID, err := tr.Connect()
 	if err != nil {
 		tr.scheduleRetry(err)
-		return nil, errors.Wrap(err, op)
+		return nil, err
 	}
 
 	ureq := UDPRequest{
@@ -54,7 +51,7 @@ func (tr *UDPTracker) Announce(req Request) (*Response, error) {
 	conn, err := net.DialTimeout("udp", tr.URL.Host, 500*time.Millisecond)
 	if err != nil {
 		tr.scheduleRetry(err)
-		return nil, errors.Wrap(err, op, errors.Network)
+		return nil, err
 	}
 	conn.SetWriteDeadline(time.Now().Add(500*time.Millisecond))
 	conn.SetReadDeadline(time.Now().Add(500*time.Millisecond))
@@ -64,7 +61,7 @@ func (tr *UDPTracker) Announce(req Request) (*Response, error) {
 	err = binary.Write(conn, binary.BigEndian, ureq)
 	if err != nil {
 		tr.scheduleRetry(err)
-		return nil, errors.Wrap(err, op, errors.Network)
+		return nil, err
 	}
 
 	var res Response
@@ -105,7 +102,6 @@ func (tr *UDPTracker) ShouldAnnounce() bool {
 }
 
 func (tr *UDPTracker) Connect() (uint64, error) {
-	var op errors.Op = "tracker.UDPConnect"
 	conn, err := net.DialTimeout("udp", tr.URL.Host, 500*time.Millisecond)
 	if err != nil {
 		return 0, err
@@ -117,7 +113,7 @@ func (tr *UDPTracker) Connect() (uint64, error) {
 		tr.scheduleRetry(err)
 
 		if nerr, ok := err.(net.Error); ok && !nerr.Temporary() {
-			return 0, errors.Wrap(err, op, errors.Network)
+			return 0, nerr
 		}
 
 		return 0, err
@@ -129,7 +125,7 @@ func (tr *UDPTracker) Connect() (uint64, error) {
 	err = binary.Write(conn, binary.BigEndian, req)
 	if err != nil {
 		tr.scheduleRetry(err)
-		return 0, errors.Wrap(err, op, errors.Network)
+		return 0, err
 	}
 
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
@@ -138,7 +134,7 @@ func (tr *UDPTracker) Connect() (uint64, error) {
 	err = binary.Read(conn, binary.BigEndian, &res)
 	if err != nil {
 		tr.scheduleRetry(err)
-		return 0, errors.Wrap(err, op)
+		return 0, err
 	}
 
 	err = ValidateConnection(req, res)
@@ -159,12 +155,12 @@ func (tr *UDPTracker) scheduleRetry(e error) {
 func ValidateConnection(req ConnectReq, res ConnMessage) error {
 	if req.TxID != res.TxID {
 		err := fmt.Errorf("Transaction IDs do not match: want %d got %d", req.TxID, res.TxID)
-		return errors.Wrap(err, errors.Internal)
+		return err
 	}
 
 	if res.Action != req.Action {
 		err := fmt.Errorf("Actions do not match: want %d got %d", req.Action, res.Action)
-		return errors.Wrap(err, errors.Internal)
+		return err
 	}
 
 	return nil

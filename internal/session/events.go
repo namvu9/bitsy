@@ -26,7 +26,7 @@ func (s *Session) handleDownloadCompleteEvent(ev data.DownloadCompleteEvent) {
 
 func (s *Session) handleRequestMessage(msg data.RequestMessage) {
 	res := s.peers.Get(msg.Hash, peers.GetRequest{
-		Limit: 3,
+		Limit: 2,
 		OrderBy: func(p1, p2 *peer.Peer) bool {
 			if p1.UploadRate > p2.UploadRate {
 				return true

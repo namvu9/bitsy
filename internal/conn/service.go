@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/namvu9/bitsy/internal/errors"
 	"github.com/namvu9/bitsy/pkg/bits"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
@@ -95,7 +94,6 @@ func (cs *connectionService) Init(ctx context.Context) error {
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
-				err = errors.Wrap(err)
 				continue
 			}
 

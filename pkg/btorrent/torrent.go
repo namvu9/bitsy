@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"io/ioutil"
 	"net"
 	"net/url"
@@ -13,7 +14,6 @@ import (
 	"strings"
 
 	"github.com/namvu9/bencode"
-	"github.com/namvu9/bitsy/internal/errors"
 )
 
 // Torrent contains metadata for one or more files and wraps
@@ -325,7 +325,6 @@ func (t *Torrent) Length() Size {
 // Load a torrent into memory from either a magnet link or a
 // file on disk
 func Load(location string) (*Torrent, error) {
-	var op errors.Op = "torrent.Load"
 	p, err := url.PathUnescape(location)
 	if err != nil {
 		return nil, err
@@ -333,19 +332,19 @@ func Load(location string) (*Torrent, error) {
 
 	url, err := url.Parse(p)
 	if err != nil {
-		return nil, errors.Wrap(err, op)
+		return nil, err
 	}
 
 	var t *Torrent
 	if url.Scheme == "magnet" {
 		t, err = LoadMagnetURL(url)
 		if err != nil {
-			return nil, errors.Wrap(err, op)
+			return nil, err
 		}
 	} else {
 		t, err = loadFromFile(location)
 		if err != nil {
-			return nil, errors.Wrap(err, op)
+			return nil, err
 		}
 	}
 
@@ -355,8 +354,8 @@ func Load(location string) (*Torrent, error) {
 	// cannot be identified without a valid info hash and
 	// indicates an error
 	if t.InfoHash() == [20]byte{} {
-		err := errors.Newf("file at %s does not have a valid info hash", location)
-		return nil, errors.Wrap(err, op)
+		err := fmt.Errorf("file at %s does not have a valid info hash", location)
+		return nil, err
 	}
 
 	return t, nil
@@ -371,7 +370,7 @@ func LoadMagnetURL(u *url.URL) (*Torrent, error) {
 	trs, ok := queries["tr"]
 	if !ok || len(trs) == 0 {
 		// DHT is currently not supported
-		return nil, errors.New("magnet link must specify at least 1 tracker")
+		return nil, fmt.Errorf("magnet link must specify at least 1 tracker")
 	}
 
 	for _, tracker := range queries["tr"] {
@@ -387,7 +386,7 @@ func LoadMagnetURL(u *url.URL) (*Torrent, error) {
 		urn      = xt[2]
 	)
 	if protocol != "btih" {
-		return nil, errors.New("Only BitTorrent URNs (btih) are supported")
+		return nil, fmt.Errorf("Only BitTorrent URNs (btih) are supported")
 	}
 	hash, err := hex.DecodeString(urn)
 	if err != nil {
@@ -418,16 +417,14 @@ func loadFromFile(path string) (*Torrent, error) {
 
 // TODO: Validate torrent
 func Save(path string, t *Torrent) error {
-	var op errors.Op = "torrent.Save"
-
 	data, err := bencode.Marshal(t.Dict())
 	if err != nil {
-		return errors.Wrap(err, op)
+		return err
 	}
 
 	err = ioutil.WriteFile(path, data, 0755)
 	if err != nil {
-		return errors.Wrap(err, op, errors.IO)
+		return err
 	}
 
 	return nil

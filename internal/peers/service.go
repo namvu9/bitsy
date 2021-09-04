@@ -1,11 +1,8 @@
 package peers
 
 import (
-	"math/rand"
-	"net"
 	"sort"
 	"sync"
-	"time"
 
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
@@ -64,7 +61,6 @@ func (service *peerService) getPeersSorted(hash InfoHash, orderBy OrderByFunc) [
 	return cpy
 }
 
-// TODO: Shuffle if OrderBy == nil
 func (service *peerService) Get(hash InfoHash, req GetRequest) GetResponse {
 	sorted := service.getPeersSorted(hash, req.OrderBy)
 
@@ -229,11 +225,4 @@ func NewService(cfg Config, emitter chan interface{}) Service {
 		port:     cfg.Port,
 		peerID:   cfg.PeerID,
 	}
-}
-
-func shuffle(peers []net.Addr) {
-	rand.Seed(time.Now().UnixNano())
-	rand.Shuffle(len(peers), func(i, j int) {
-		peers[i], peers[j] = peers[j], peers[i]
-	})
 }
