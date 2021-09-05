@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +26,7 @@ type connectionService struct {
 	torrents map[[20]byte]btorrent.Torrent
 	port     uint16
 	ip       string
+	extIP    string
 	peerID   [20]byte
 	emitter  chan<- interface{}
 	conns    chan struct{}
@@ -50,6 +52,10 @@ func (cs *connectionService) closeConn(p *peer.Peer) {
 }
 
 func (cs *connectionService) Dial(addr net.Addr, cfg peer.DialConfig) (*peer.Peer, error) {
+	if strings.Contains(addr.String(), cs.extIP) {
+		return nil, fmt.Errorf("cannot dial self")
+	}
+
 	if _, ok := cs.hosts[addr]; ok {
 		return nil, fmt.Errorf("already dialed")
 	}
@@ -154,6 +160,7 @@ func (cs *connectionService) Stat() int {
 
 type Config struct {
 	IP             string
+	ExtIP          string
 	Port           uint16
 	PeerID         [20]byte
 	PStr           string
@@ -166,6 +173,7 @@ func NewService(cfg Config, emitter chan<- interface{}) Service {
 		torrents: make(map[[20]byte]btorrent.Torrent),
 		conns:    make(chan struct{}, cfg.MaxConnections),
 		ip:       cfg.IP,
+		extIP:    cfg.ExtIP,
 		port:     cfg.Port,
 		peerID:   cfg.PeerID,
 		emitter:  emitter,

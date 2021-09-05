@@ -9,10 +9,15 @@ import (
 type Service interface {
 	Forward(uint16) error
 	ForwardMany([]uint16) (uint16, error)
+	RemoteAddr() (string, error)
 }
 
 type ports struct {
 	d *upnp.IGD
+}
+
+func (p *ports) RemoteAddr() (string, error) {
+	return p.d.ExternalIP()
 }
 
 func (p *ports) Forward(port uint16) error {

@@ -250,8 +250,14 @@ func New(cfg Config) *Session {
 		panic(err)
 	}
 
+	ip, err := portsService.RemoteAddr()
+	if err != nil {
+		panic(err)
+	}
+
 	var connCfg = conn.Config{
 		IP:             cfg.IP,
+		ExtIP:          ip,
 		Port:           port,
 		PeerID:         PeerID,
 		MaxConnections: cfg.MaxConnections,

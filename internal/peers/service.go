@@ -1,6 +1,8 @@
 package peers
 
 import (
+	"bytes"
+	"fmt"
 	"math/rand"
 	"sort"
 	"sync"
@@ -152,6 +154,12 @@ func (svc *peerService) Swarms() map[InfoHash]SwarmStat {
 func (svc *peerService) Add(hash InfoHash, p *peer.Peer) {
 	svc.lock.Lock()
 	defer svc.lock.Unlock()
+
+	if bytes.Equal(svc.peerID[:], p.ID) {
+		fmt.Println("TRIED ADDING MYSELF", string(svc.peerID[:]), string(p.ID))
+		//p.Close("TRIED ADDING MYSELF")
+		//return
+	}
 
 	if p.Closed() {
 		return
