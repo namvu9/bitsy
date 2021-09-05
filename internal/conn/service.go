@@ -91,7 +91,7 @@ func (cs *connectionService) Unregister(t btorrent.Torrent) {
 	delete(cs.torrents, t.InfoHash())
 }
 func (cs *connectionService) Init(ctx context.Context) error {
-	addr := fmt.Sprintf("%s:%d", cs.ip, cs.port)
+	addr := fmt.Sprintf(":%d", cs.port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err

@@ -78,7 +78,7 @@ func (asb *assembler) assembleTorrent(t btorrent.Torrent, pieces bits.BitField) 
 			continue
 		}
 
-		filePath := path.Join(asb.downloadDir, file.Name)
+		filePath := path.Join(asb.downloadDir, t.Name(),file.Name)
 		outFile, err := os.Create(filePath)
 
 		n, err := asb.assembleFile(t, idx, outFile)
