@@ -9,7 +9,6 @@ import (
 )
 
 type Service interface {
-
 	// Load reads the specified piece into memory and returns
 	// it
 	Load([20]byte, int) ([]byte, error)

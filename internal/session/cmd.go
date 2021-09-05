@@ -9,8 +9,11 @@ type PauseCmd struct {
 	Hash [20]byte
 }
 
+type StartCmd struct {
+	Hash [20]byte
+}
+
 type RegisterCmd struct {
 	t    btorrent.Torrent
 	opts []data.Option
 }
-

@@ -235,6 +235,12 @@ func (s *Session) Pause(hash [20]byte) error {
 	return nil
 }
 
+func (s *Session) Start(hash [20]byte) error {
+	s.eventsIn <- StartCmd{Hash: hash}
+
+	return nil
+}
+
 func New(cfg Config) *Session {
 	eventsIn := make(chan interface{}, 100)
 
