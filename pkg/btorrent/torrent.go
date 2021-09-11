@@ -20,6 +20,7 @@ import (
 // a bencoded dictionary.
 type Torrent struct {
 	dict *bencode.Dictionary
+	files []File
 }
 
 type Pieces []struct {
@@ -216,6 +217,10 @@ func GroupBytes(data []byte, n int) [][]byte {
 
 // Files returns a list of file metadata
 func (t *Torrent) Files() []File {
+	if len(t.files) > 0 {
+		return t.files
+	}
+
 	info, ok := t.Info()
 	if !ok {
 		panic("torrent does not have an info dictionary")
@@ -239,7 +244,9 @@ func (t *Torrent) Files() []File {
 		}
 	}
 
-	return t.getFiles(files)
+	t.files = t.getFiles(files)
+
+	return t.files
 }
 
 func (t *Torrent) getFiles(files bencode.List) []File {
@@ -248,7 +255,7 @@ func (t *Torrent) getFiles(files bencode.List) []File {
 
 	// Multi-file torrent
 	sum := 0
-	for i, file := range files {
+	for _, file := range files {
 		fDict, ok := file.ToDict()
 		if !ok {
 			continue
@@ -259,7 +266,6 @@ func (t *Torrent) getFiles(files bencode.List) []File {
 
 		// TODO: BUG: Must consider offsets
 		tf, overlap := getFileData(offset, *fDict, pieces, *t)
-		fmt.Println(i, "overlap", overlap, tf.Pieces)
 		out = append(out, tf)
 
 		if overlap {
@@ -475,7 +481,7 @@ func (t Torrent) GenFastSet(ip net.IP, k int) []int {
 
 func New() *Torrent {
 	return &Torrent{
-		&bencode.Dictionary{},
+		dict: &bencode.Dictionary{},
 	}
 }
 
