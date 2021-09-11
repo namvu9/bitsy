@@ -74,6 +74,8 @@ func (pm *pieceManager) Verify(hash [20]byte, idx int, data []byte) error {
 		return fmt.Errorf("piece %d is corrupted", idx)
 	}
 
+	fmt.Printf("Verified %d\n", idx)
+
 	return nil
 }
 

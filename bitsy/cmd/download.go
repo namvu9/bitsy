@@ -19,10 +19,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/namvu9/bitsy/internal/data"
+	"github.com/namvu9/bitsy/internal/peers"
 	"github.com/namvu9/bitsy/internal/session"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/spf13/cobra"
@@ -96,7 +100,7 @@ bitsy download /path/to/torrent
 			DownloadDir:    downloadDir,
 			MaxConnections: 50,
 			IP:             "192.168.0.4",
-			Ports:           []uint16{6881},
+			Ports:          []uint16{6881, 6889, 6882, 7881, 9999},
 		})
 
 		opts := []data.Option{}
@@ -129,9 +133,70 @@ bitsy download /path/to/torrent
 			s.Register(*t, opts...)
 		}
 
-		select {}
-
+		for {
+			s := printStat(s.Stat())
+			clear()
+			fmt.Println(s)
+			time.Sleep(time.Second)
+		}
 	},
+}
+
+func clear() {
+	cmd := exec.Command("clear")
+	cmd.Stdout = os.Stdout
+	cmd.Run()
+}
+
+func printStat(stat map[string]interface{}) string{
+	var sb strings.Builder
+
+	clients := stat["clients"].(map[string]data.ClientStat)
+	swarms := stat["swarms"].(map[string]peers.SwarmStat)
+
+	fmt.Fprintf(&sb, "-----\nBitsy\n-----\n")
+	fmt.Fprintf(&sb, "Connections: %d\n", stat["connections"])
+
+	for hash, c := range clients {
+		swarm := swarms[hash]
+		fmt.Fprintf(&sb, "<<<%s>>>\n", c.Name)
+		fmt.Fprintf(&sb, "Uploaded: %s\n", c.Uploaded)
+		fmt.Fprintf(&sb, "Downloaded: %s\n", c.Downloaded)
+		fmt.Fprintf(&sb, "Download Rate: %s / s\n", c.DownloadRate)
+		fmt.Fprintf(&sb, "Pending pieces: %d\n", c.Pending)
+
+		fmt.Fprintf(&sb, "Peers: %d (%d Interesting, %d Choked by)\n\n", len(swarm.Peers), swarm.Interesting, swarm.Blocking)
+		fmt.Fprintf(&sb, "Top uploaders:\n")
+
+		sort.SliceStable(swarm.Peers, func(i, j int) bool {
+			return swarm.Peers[i].UploadRate > swarm.Peers[j].UploadRate
+		})
+
+		count := 0
+		for idx, p := range swarm.Peers {
+			if count == 5 {
+				break
+			}
+			fmt.Fprintf(&sb, "%d: %s %s / s (Total: %s)\n", idx, p.IP, btorrent.Size(p.UploadRate), btorrent.Size(p.Uploaded))
+			count++
+		}
+
+		fmt.Fprintln(&sb, "")
+
+		for _, file := range c.Files {
+			if file.Ignored {
+				continue
+			}
+
+			fmt.Fprintf(&sb, "%d: %s\n", file.Index, file.Name)
+			fmt.Fprintf(&sb, "Downloaded: %s (%s)\n", file.Downloaded, file.Size)
+
+		}
+
+		fmt.Fprintf(&sb, "\n\n")
+	}
+
+	return sb.String()
 }
 
 func init() {

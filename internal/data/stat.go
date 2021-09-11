@@ -30,16 +30,18 @@ func (fs FileStat) String() string {
 }
 
 type ClientStat struct {
-	State        ClientState
-	Error        error
-	Pieces       int
-	TotalPieces  int
-	DownloadRate btorrent.Size // per second
-	Downloaded   btorrent.Size
-	Left         btorrent.Size
-	Uploaded     btorrent.Size
-	Files        []FileStat
-	Pending      int
+	Name         string        `json:"name"`
+	State        string        `json:"state"`
+	Error        error         `json:"error"`
+	Pieces       int           `json:"pieces"`
+	TotalPieces  int           `json:"totalPieces"`
+	Pending      int           `json:"pendingPieces"`
+	DownloadRate btorrent.Size `json:"downloadRate"`
+	Downloaded   btorrent.Size `json:"downloaded"`
+	Left         btorrent.Size `json:"left"`
+	Total        btorrent.Size `json:"total"`
+	Uploaded     btorrent.Size `json:"uploaded"`
+	Files        []FileStat    `json:"files"`
 
 	BaseDir string
 	OutDir  string
@@ -105,7 +107,9 @@ func (c *Client) Stat() ClientStat {
 	}
 
 	return ClientStat{
-		State:        c.state,
+		Name:         c.torrent.Name(),
+		Total:        c.torrent.Length(),
+		State:        fmt.Sprint(c.state),
 		Error:        c.err,
 		Uploaded:     btorrent.Size(c.Uploaded),
 		Downloaded:   btorrent.Size(c.pieces.GetSum() * int(c.torrent.PieceLength())),

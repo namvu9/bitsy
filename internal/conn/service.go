@@ -159,7 +159,6 @@ func (cs *connectionService) Stat() int {
 }
 
 type Config struct {
-	IP             string
 	ExtIP          string
 	Port           uint16
 	PeerID         [20]byte
@@ -172,7 +171,6 @@ func NewService(cfg Config, emitter chan<- interface{}) Service {
 	return &connectionService{
 		torrents: make(map[[20]byte]btorrent.Torrent),
 		conns:    make(chan struct{}, cfg.MaxConnections),
-		ip:       cfg.IP,
 		extIP:    cfg.ExtIP,
 		port:     cfg.Port,
 		peerID:   cfg.PeerID,

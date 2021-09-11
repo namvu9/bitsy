@@ -1,6 +1,8 @@
 package assembler
 
 import (
+	"bytes"
+	"crypto/sha1"
 	"fmt"
 	"io"
 	"os"
@@ -78,42 +80,63 @@ func (asb *assembler) assembleTorrent(t btorrent.Torrent, pieces bits.BitField) 
 			continue
 		}
 
-		filePath := path.Join(asb.downloadDir, t.Name(),file.Name)
+		filePath := path.Join(asb.downloadDir, t.Name(), file.Name)
 		outFile, err := os.Create(filePath)
+		if err != nil {
+			return err
+		}
 
 		n, err := asb.assembleFile(t, idx, outFile)
 		if err != nil {
-			fmt.Println("ERR ASSEMBLE", err)
 			continue
 		}
 
 		if n != int(file.Length) {
-			return fmt.Errorf("expected file length to be %d but wrote %d", file.Length, n)
+			err := fmt.Errorf("%s: expected file length to be %d but wrote %d", file.Name, file.Length, n)
+			fmt.Println(err)
+			continue
 		}
 
 		asb.written[file.Name] = true
+		fmt.Println("wrote", file.Name)
 	}
 
 	return nil
+}
+
+func pieceIn(hashes [][]byte, piece []byte) bool {
+	hashedPiece := sha1.Sum(piece)
+	for _, h := range hashes {
+		if bytes.Equal(h, hashedPiece[:]) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (asb *assembler) assembleFile(t btorrent.Torrent, fileIdx int, w io.Writer) (int, error) {
 	var (
 		totalWritten int
 		file         = t.Files()[fileIdx]
-		index        = t.GetPieceIndex(file.Pieces[0])
 		offset       = uint64(asb.getFileOffset(t, fileIdx))
 		pieceLen     = uint64(t.PieceLength())
 		fileSize     = uint64(file.Length)
 	)
 
-	for uint64(totalWritten) < fileSize {
+	//fmt.Printf("File %s %d, Offset %d, Size %d, Overlap: %d\n", file.Name, fileIdx, offset, file.Length, uint64(file.Length) % pieceLen)
+
+	fmt.Printf("File %s %d, first piece idx: %d, last: %d\n", file.Name, fileIdx, t.GetPieceIndex(file.Pieces[0]), t.GetPieceIndex(file.Pieces[len(file.Pieces)-1]))
+
+	for _, hash := range file.Pieces {
+		index := t.GetPieceIndex(hash)
 		piece, err := asb.pieceMgr.Load(t.InfoHash(), index)
 		if err != nil {
 			return 0, err
 		}
 
 		var left = fileSize - uint64(totalWritten)
+		fmt.Println("HASH", left, offset)
 		var data []byte
 		if left < pieceLen {
 			data = piece[offset : offset+left]
@@ -127,7 +150,6 @@ func (asb *assembler) assembleFile(t btorrent.Torrent, fileIdx int, w io.Writer)
 			return totalWritten, err
 		}
 
-		index++
 		offset = 0
 	}
 

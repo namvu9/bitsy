@@ -16,7 +16,11 @@ import (
 
 type ClientState int
 
-const MAX_PENDING_PIECES = 10
+const MAX_PENDING_PIECES = 50
+
+func maxPendingPieces(pieceSize int, topSpeed int) int {
+	return topSpeed / pieceSize
+}
 
 const (
 	STOPPED ClientState = iota
@@ -176,9 +180,10 @@ func (c *Client) download() {
 		ticker       = time.NewTicker(2 * time.Second)
 		downloadRate = 0.0
 		batch        = 0
+		maxPieces    = maxPendingPieces(int(c.torrent.PieceLength()), 10*1024*1024)
 	)
 
-	c.downloadN(10)
+	c.downloadN(30)
 
 	for {
 		select {
@@ -189,8 +194,8 @@ func (c *Client) download() {
 			}
 
 			if done {
-				if len(c.workers) < MAX_PENDING_PIECES {
-					c.downloadN(2)
+				if len(c.workers) < maxPieces {
+					c.downloadN(maxPieces)
 				}
 				continue
 			}
@@ -200,7 +205,7 @@ func (c *Client) download() {
 		case <-ticker.C:
 			c.clearCompletedPieces()
 			if len(c.workers) < MAX_PENDING_PIECES {
-				c.downloadN(1)
+				c.downloadN(maxPieces)
 			}
 
 			downloadRate = float64(batch) / 2.0

@@ -17,3 +17,7 @@ type RegisterCmd struct {
 	t    btorrent.Torrent
 	opts []data.Option
 }
+
+type StatCmd struct {
+	res chan map[string]interface{}
+}

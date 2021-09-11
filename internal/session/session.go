@@ -59,6 +59,8 @@ func (s *Session) handleEvents(ctx context.Context) {
 	for {
 		event := <-s.eventsIn
 		switch v := event.(type) {
+		case StatCmd:
+			v.res <- s.stat()
 		case PauseCmd:
 			s.data.Stop(v.Hash)
 		case RegisterCmd:
@@ -159,15 +161,13 @@ func (s *Session) heartbeat(ctx context.Context) {
 				s.unchoke()
 				lastInterval = time.Now()
 			}
-
-			s.stat()
 		}
 	}
 }
 
 func (s *Session) fillSwarms() {
 	for hash, stat := range s.peers.Swarms() {
-		if stat.Peers < 30 {
+		if len(stat.Peers) < 30 {
 			stat := s.data.Stat(hash)
 			pInfo := s.peers.Discover(hash, 100, peers.Stat{
 				Downloaded: uint64(stat.Downloaded),
@@ -213,7 +213,7 @@ func (s *Session) unchoke() {
 			p.Send(peer.UnchokeMessage{})
 		}
 
-		if stat.Peers-stat.Choked >= 4 {
+		if len(stat.Peers)-stat.Choked >= 4 {
 			res := s.peers.Get(hash, peers.GetRequest{
 				Limit: 1,
 				Filter: func(p *peer.Peer) bool {
@@ -247,7 +247,8 @@ func New(cfg Config) *Session {
 	var portsService = ports.NewService()
 	port, err := portsService.ForwardMany(cfg.Ports)
 	if err != nil {
-		panic(err)
+		fmt.Println("FAILED TO FORWARD PORT", err)
+		panic(cfg.Ports)
 	}
 
 	ip, err := portsService.RemoteAddr()
@@ -256,7 +257,6 @@ func New(cfg Config) *Session {
 	}
 
 	var connCfg = conn.Config{
-		IP:             cfg.IP,
 		ExtIP:          ip,
 		Port:           port,
 		PeerID:         PeerID,

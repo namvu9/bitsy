@@ -70,6 +70,9 @@ func (svc *peerService) getPeersSorted(hash InfoHash, orderBy OrderByFunc) []*pe
 }
 
 func (svc *peerService) Get(hash InfoHash, req GetRequest) GetResponse {
+	svc.lock.Lock()
+	defer svc.lock.Unlock()
+
 	sorted := svc.getPeersSorted(hash, req.OrderBy)
 
 	var out []*peer.Peer
@@ -92,42 +95,20 @@ func (svc *peerService) Swarms() map[InfoHash]SwarmStat {
 	out := make(map[InfoHash]SwarmStat)
 
 	for hash, peers := range svc.peers {
-		sorted := svc.getPeersSorted(hash, func(p1, p2 *peer.Peer) bool {
-			if p1.UploadRate > p2.UploadRate {
-				return true
-			}
-
-			if p1.UploadRate == p2.UploadRate && p1.Uploaded > p2.Uploaded {
-				return true
-			}
-
-			return len(p1.Requests) > len(p2.Requests)
-		})
-
 		stat := SwarmStat{}
-
-		if len(sorted) < 5 {
-			stat.TopPeers = sorted
-		} else {
-			stat.TopPeers = sorted[:5]
-		}
-
-		sorted = svc.getPeersSorted(hash, func(p1, p2 *peer.Peer) bool {
-			return p1.Downloaded > p2.Downloaded
-		})
-
-		if len(sorted) < 5 {
-			stat.TopDownloaders = sorted
-		} else {
-			stat.TopDownloaders = sorted[:5]
-		}
 
 		for _, p := range peers {
 			if p.Closed() {
 				continue
 			}
 
-			stat.Peers++
+			stat.Peers = append(stat.Peers, PeerStat{
+				IP:         p.RemoteAddr().String(),
+				UploadRate: int(p.UploadRate),
+				Uploaded:   int(p.Uploaded),
+				Downloaded: int(p.Downloaded),
+			})
+
 			if p.Choked {
 				stat.Choked++
 			}
