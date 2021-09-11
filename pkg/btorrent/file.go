@@ -2,10 +2,19 @@ package btorrent
 
 import (
 	"fmt"
-	"math"
 	"path"
 
 	"github.com/namvu9/bencode"
+)
+
+// Size is the size of the file if bytes
+type Size uint64
+
+// Sizes
+const (
+	KiB = 1024
+	MiB = 1024 * 1024
+	GiB = 1024 * 1024 * 1024
 )
 
 // A File represents contains the metadata describing a
@@ -23,14 +32,12 @@ type File struct {
 	Pieces [][]byte
 }
 
-func getFileData(f bencode.Value, pieces [][]byte, t Torrent) (File, bool) {
+func getFileData(offset int, file bencode.Dictionary, pieces [][]byte, t Torrent) (File, bool) {
 	var (
-		fDict, _ = f.ToDict()
+		fileLength, _    = file.GetInteger("length")
+		fPieces, overlap = getPieces(offset, int64(fileLength), pieces, int64(t.PieceLength()))
 
-		fileLength, _    = fDict.GetInteger("length")
-		fPieces, overlap = getPieces(int64(fileLength), pieces, int64(t.PieceLength()))
-
-		segments, _ = fDict.GetList("path")
+		segments, _ = file.GetList("path")
 		p           = getFilePath(segments)
 	)
 
@@ -43,24 +50,30 @@ func getFileData(f bencode.Value, pieces [][]byte, t Torrent) (File, bool) {
 }
 
 // TODO: TEST
-func getPieces(fileLength int64, pieces [][]byte, pieceLength int64) ([][]byte, bool) {
-	var out [][]byte
-	overlap := fileLength%pieceLength != 0
+func getPieces(offset int, fileLength int64, pieces [][]byte, pieceLength int64) ([][]byte, bool) {
+	var (
+		out        [][]byte
+		fileLeft   = int(fileLength)
+		offsetLeft = offset
+		idx        int
+	)
+	for {
+		pieceLeft := int(pieceLength) - offsetLeft
+		offsetLeft = 0
 
-	// Off-by-1 error?
-	nPieces := math.Ceil(float64(fileLength) / float64(pieceLength))
+		fileLeft -= pieceLeft
+		out = append(out, pieces[idx])
 
-	for i, piece := range pieces {
-		if i == int(nPieces) {
-			return out, overlap
+		if fileLeft <= 0 {
+			fmt.Println("FILE LEFT", fileLeft, offset)
+			return out, fileLeft != 0
 		}
 
-		out = append(out, piece)
+		idx++
 	}
-
-	return out, overlap
 }
 
+// TODO: TEST
 func getFilePath(segments bencode.List) string {
 	var p string
 
@@ -72,24 +85,21 @@ func getFilePath(segments bencode.List) string {
 	return p
 }
 
-// Size is the size of the file if bytes
-type Size uint64
-
 // KiB returns the size of the file in Kibibytes (fs / 1024)
 func (fs Size) KiB() float64 {
-	return float64(fs) / 1024
+	return float64(fs) / KiB
 }
 
 // MiB returns the size of the file in Mebibytes (fs /
 // 1024^2)
 func (fs Size) MiB() float64 {
-	return float64(fs) / (1024 * 1024)
+	return float64(fs) / MiB
 }
 
 // GiB returns the size of the file in Gibibytes (fs /
 // 1024^3)
 func (fs Size) GiB() float64 {
-	return float64(fs) / (1024 * 1024 * 1024)
+	return float64(fs) / GiB
 }
 
 func (fs Size) String() string {

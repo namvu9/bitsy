@@ -46,58 +46,6 @@ func (t *Torrent) VerifyInfoDict() bool {
 	return bytes.Equal(refHash[:], hash[:])
 }
 
-func (t *Torrent) Stat() map[string]interface{} {
-	stats := make(map[string]interface{})
-
-	stats["name"] = t.Name()
-	stats["pieceLength"] = t.PieceLength()
-	stats["infoHash"] = t.HexHash()
-	stats["trackers"] = t.AnnounceList()
-
-	var fileStats []map[string]interface{}
-	for _, file := range t.Files() {
-		fileStat := make(map[string]interface{})
-		fileStat["name"] = file.Name
-		fileStat["length"] = file.Length
-		fileStat["path"] = file.FullPath
-
-		fileStats = append(fileStats, fileStat)
-	}
-
-	stats["files"] = fileStats
-
-	return stats
-}
-
-func (t *Torrent) Verify(pieces Pieces) bool {
-	verifiedPieces := make(map[int]bool)
-
-	size := 0
-
-	for _, p := range pieces {
-		if !t.VerifyPiece(p.index, p.piece) {
-			return false
-		}
-
-		size += len(p.piece)
-
-		verifiedPieces[p.index] = true
-	}
-
-	for index := range t.Pieces() {
-		if _, ok := verifiedPieces[index]; !ok {
-			return false
-		}
-	}
-
-	if t.Length() != Size(size) {
-		return false
-	}
-
-	return true
-}
-
-// TODO: TEST
 // VerifyPiece returns true if the piece's SHA-1 hash equals
 // the SHA-1 hash of the torrent piece at index i
 func (t *Torrent) VerifyPiece(i int, piece []byte) bool {
@@ -126,16 +74,14 @@ func (t *Torrent) Dict() *bencode.Dictionary {
 func (t *Torrent) PieceLength() Size {
 	info, ok := t.Info()
 	if !ok {
-		return 0
+		panic("torrent has no info dict")
 	}
+
 	pieceLength, ok := info.GetInteger("piece length")
 
 	return Size(pieceLength)
 }
 
-type PieceHash []byte
-
-// TODO: TEST
 // Pieces returns the hashes of the pieces that constitute
 // the data identified by the torrent. Each piece is a
 // 20-byte SHA-1 hash of a block of data defined by the
@@ -149,6 +95,10 @@ func (t *Torrent) Pieces() [][]byte {
 	piecesBytes, ok := info.GetBytes("pieces")
 	if !ok {
 		return [][]byte{}
+	}
+
+	if len(piecesBytes)%20 != 0 {
+		panic("malformed torrent data: 'pieces' array not multiple of 20")
 	}
 
 	// Group pieces according to piece length
@@ -213,16 +163,6 @@ func (t *Torrent) HexHash() string {
 	return hex.EncodeToString(hash[:])
 }
 
-// Announce returns the url of the torrent's tracker
-func (t *Torrent) Announce() string {
-	s, ok := t.dict.GetString("announce")
-	if !ok {
-		return ""
-	}
-
-	return s
-}
-
 // AnnounceList returns a list of lists of tracker URLs, as
 // defined in BEP-12
 func (t *Torrent) AnnounceList() [][]string {
@@ -276,8 +216,6 @@ func GroupBytes(data []byte, n int) [][]byte {
 
 // Files returns a list of file metadata
 func (t *Torrent) Files() []File {
-	var out []File
-
 	info, ok := t.Info()
 	if !ok {
 		panic("torrent does not have an info dictionary")
@@ -291,12 +229,37 @@ func (t *Torrent) Files() []File {
 		fileLength, _ := info.GetInteger("length")
 		name, _ := info.GetString("name")
 
-		out = append(out, File{Name: name, Length: Size(fileLength), FullPath: name, Pieces: pieces})
+		return []File{
+			{
+				Name:     name,
+				Length:   Size(fileLength),
+				FullPath: name,
+				Pieces:   pieces,
+			},
+		}
 	}
 
+	return t.getFiles(files)
+}
+
+func (t *Torrent) getFiles(files bencode.List) []File {
+	var out []File
+	var pieces = t.Pieces()
+
 	// Multi-file torrent
-	for _, file := range files {
-		tf, overlap := getFileData(file, pieces, *t)
+	sum := 0
+	for i, file := range files {
+		fDict, ok := file.ToDict()
+		if !ok {
+			continue
+		}
+
+		fileLength, _ := fDict.GetInteger("length")
+		offset := sum % int(t.PieceLength())
+
+		// TODO: BUG: Must consider offsets
+		tf, overlap := getFileData(offset, *fDict, pieces, *t)
+		fmt.Println(i, "overlap", overlap, tf.Pieces)
 		out = append(out, tf)
 
 		if overlap {
@@ -304,6 +267,8 @@ func (t *Torrent) Files() []File {
 		} else {
 			pieces = pieces[len(tf.Pieces):]
 		}
+
+		sum += int(fileLength)
 	}
 
 	return out
@@ -463,6 +428,7 @@ func LoadDir(dir string) ([]*Torrent, error) {
 	return out, nil
 }
 
+// TODO: TEST
 func (t Torrent) GetPieceIndex(hash []byte) int {
 	for i, piece := range t.Pieces() {
 		if bytes.Equal(piece, hash) {
@@ -506,7 +472,6 @@ func (t Torrent) GenFastSet(ip net.IP, k int) []int {
 
 	return out
 }
-
 
 func New() *Torrent {
 	return &Torrent{
