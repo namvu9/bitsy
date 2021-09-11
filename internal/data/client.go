@@ -16,7 +16,7 @@ import (
 
 type ClientState int
 
-const MAX_PENDING_PIECES = 50
+const TOP_SPEED = 50 * btorrent.MiB
 
 func maxPendingPieces(pieceSize int, topSpeed int) int {
 	return topSpeed / pieceSize
@@ -180,10 +180,10 @@ func (c *Client) download() {
 		ticker       = time.NewTicker(2 * time.Second)
 		downloadRate = 0.0
 		batch        = 0
-		maxPieces    = maxPendingPieces(int(c.torrent.PieceLength()), 10*1024*1024)
+		maxPieces    = maxPendingPieces(int(c.torrent.PieceLength()), TOP_SPEED)
 	)
 
-	c.downloadN(30)
+	c.downloadN(1)
 
 	for {
 		select {
@@ -204,8 +204,8 @@ func (c *Client) download() {
 
 		case <-ticker.C:
 			c.clearCompletedPieces()
-			if len(c.workers) < MAX_PENDING_PIECES {
-				c.downloadN(maxPieces)
+			if len(c.workers) < maxPieces {
+				c.downloadN(1)
 			}
 
 			downloadRate = float64(batch) / 2.0
@@ -237,7 +237,7 @@ func (c *Client) done() bool {
 }
 
 func (c *Client) downloadN(n int) {
-	for _, pieceIdx := range c.nextNPieces(n, c.workers) {
+	for _, pieceIdx := range c.nextNPieces(n, c.workers, c.piecePrio) {
 		c.downloadPiece(uint32(pieceIdx), false)
 	}
 }
@@ -292,7 +292,7 @@ func (c *Client) downloadPiece(index uint32, fast bool) *worker {
 		return nil
 	}
 
-	if len(c.workers) > MAX_PENDING_PIECES {
+	if len(c.workers) > maxPendingPieces(int(c.torrent.PieceLength()), TOP_SPEED) {
 		return nil
 	}
 

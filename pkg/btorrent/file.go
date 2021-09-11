@@ -65,7 +65,6 @@ func getPieces(offset int, fileLength int64, pieces [][]byte, pieceLength int64)
 		out = append(out, pieces[idx])
 
 		if fileLeft <= 0 {
-			fmt.Println("FILE LEFT", fileLeft, offset)
 			return out, fileLeft != 0
 		}
 

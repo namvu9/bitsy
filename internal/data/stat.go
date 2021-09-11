@@ -3,6 +3,7 @@ package data
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/namvu9/bitsy/pkg/btorrent"
 )
@@ -30,12 +31,14 @@ func (fs FileStat) String() string {
 }
 
 type ClientStat struct {
-	Name         string        `json:"name"`
-	State        string        `json:"state"`
-	Error        error         `json:"error"`
-	Pieces       int           `json:"pieces"`
-	TotalPieces  int           `json:"totalPieces"`
-	Pending      int           `json:"pendingPieces"`
+	Name         string `json:"name"`
+	State        string `json:"state"`
+	Error        error  `json:"error"`
+	Pieces       int    `json:"pieces"`
+	TotalPieces  int    `json:"totalPieces"`
+	Pending      int    `json:"pendingPieces"`
+	TimeLeft     time.Duration
+	PieceLength  btorrent.Size
 	DownloadRate btorrent.Size `json:"downloadRate"`
 	Downloaded   btorrent.Size `json:"downloaded"`
 	Left         btorrent.Size `json:"left"`
@@ -77,6 +80,7 @@ func min(a, b int) int {
 
 func (c *Client) Stat() ClientStat {
 	var fs []FileStat
+	var left int
 
 	for i, file := range c.torrent.Files() {
 		var ignored bool
@@ -97,6 +101,9 @@ func (c *Client) Stat() ClientStat {
 			}
 		}
 
+		left += int(file.Length) - downloaded
+
+
 		fs = append(fs, FileStat{
 			Index:      i,
 			Ignored:    ignored,
@@ -106,13 +113,25 @@ func (c *Client) Stat() ClientStat {
 		})
 	}
 
+	downloaded := btorrent.Size(c.pieces.GetSum() * int(c.torrent.PieceLength()))
+
+	var timeLeft time.Duration
+
+	
+	if c.DownloadRate > 0 {
+		timeLeft = time.Duration(left / int(c.DownloadRate))
+		timeLeft *= time.Second
+	}
+
 	return ClientStat{
 		Name:         c.torrent.Name(),
+		TimeLeft:     timeLeft,
+		PieceLength:  c.torrent.PieceLength(),
 		Total:        c.torrent.Length(),
 		State:        fmt.Sprint(c.state),
 		Error:        c.err,
 		Uploaded:     btorrent.Size(c.Uploaded),
-		Downloaded:   btorrent.Size(c.pieces.GetSum() * int(c.torrent.PieceLength())),
+		Downloaded:   downloaded,
 		DownloadRate: c.DownloadRate,
 		Left:         btorrent.Size((len(c.torrent.Pieces()) - c.pieces.GetSum()) * int(c.torrent.PieceLength())),
 

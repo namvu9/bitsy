@@ -160,6 +160,12 @@ func printStat(stat map[string]interface{}) string{
 	for hash, c := range clients {
 		swarm := swarms[hash]
 		fmt.Fprintf(&sb, "<<<%s>>>\n", c.Name)
+		if c.TimeLeft > 0 {
+			fmt.Fprintf(&sb, "Time left: %s\n", c.TimeLeft)
+		} else {
+			fmt.Fprintf(&sb, "Time left: N/A\n")
+		}
+		fmt.Fprintf(&sb, "Piece Length: %s\n", c.PieceLength)
 		fmt.Fprintf(&sb, "Uploaded: %s\n", c.Uploaded)
 		fmt.Fprintf(&sb, "Downloaded: %s\n", c.Downloaded)
 		fmt.Fprintf(&sb, "Download Rate: %s / s\n", c.DownloadRate)
