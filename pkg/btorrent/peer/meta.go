@@ -8,6 +8,7 @@ import (
 	"net"
 
 	"github.com/namvu9/bencode"
+	bsize "github.com/namvu9/bitsy/pkg/btorrent/size"
 )
 
 const (
@@ -17,7 +18,7 @@ const (
 )
 
 func RequestInfoDict(code, size int) []MetaRequestMessage {
-	pieceSize := 16 * 1024
+	pieceSize := 16 * bsize.KiB
 	var nPieces int
 	if size%pieceSize == 0 {
 		nPieces = size / pieceSize
@@ -80,6 +81,7 @@ func (msg *MetaRequestMessage) Bytes() []byte {
 	var d bencode.Dictionary
 	d.SetStringKey("msg_type", bencode.Integer(META_REQUEST))
 	d.SetStringKey("piece", bencode.Integer(msg.Piece))
+
 	payload, err := bencode.Marshal(&d)
 	if err != nil {
 		return buf.Bytes()
@@ -138,9 +140,6 @@ func getInfoDict(ctx context.Context, p *Peer, code, size int) (*bencode.Diction
 }
 
 func GetInfoDict(ctx context.Context, peers []net.Addr, cfg DialConfig) (*bencode.Dictionary, error) {
-	extHandshake := new(ExtHandshakeMsg)
-	extHandshake.M().SetStringKey(EXT_UT_META, bencode.Integer(EXT_CODE_META))
-
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -168,40 +167,44 @@ func GetInfoDict(ctx context.Context, peers []net.Addr, cfg DialConfig) (*bencod
 				continue
 			}
 
-			go func(p *Peer) {
-				ctx, cancel := context.WithCancel(ctx)
-				defer func() {
-					p.Close("done")
-					cancel()
-				}()
-
-				if err := p.Send(extHandshake); err != nil {
-					return
-				}
-
-				msg, ok := (<-p.Msg).(*ExtHandshakeMsg)
-				if !ok {
-					return
-				}
-
-				size, ok := msg.D().GetInteger(EXT_UT_META_SIZE)
-				if !ok {
-					return
-				}
-
-				code, ok := msg.M().GetInteger(EXT_UT_META)
-				if !ok {
-					return
-				}
-
-				info, err := getInfoDict(ctx, p, int(code), int(size))
-				if err != nil {
-					return
-				}
-
-				res <- info
-				return
-			}(p)
+			go requestMetadata(ctx, p, res)
 		}
 	}
+}
+func requestMetadata(ctx context.Context, p *Peer, res chan *bencode.Dictionary) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer func() {
+		p.Close("done")
+		cancel()
+	}()
+
+	extHandshake := new(ExtHandshakeMsg)
+	extHandshake.M().SetStringKey(EXT_UT_META, bencode.Integer(EXT_CODE_META))
+
+	if err := p.Send(extHandshake); err != nil {
+		return
+	}
+
+	msg, ok := (<-p.Msg).(*ExtHandshakeMsg)
+	if !ok {
+		return
+	}
+
+	size, ok := msg.D().GetInteger(EXT_UT_META_SIZE)
+	if !ok {
+		return
+	}
+
+	code, ok := msg.M().GetInteger(EXT_UT_META)
+	if !ok {
+		return
+	}
+
+	info, err := getInfoDict(ctx, p, int(code), int(size))
+	if err != nil {
+		return
+	}
+
+	res <- info
+	return
 }

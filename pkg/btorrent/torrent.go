@@ -13,6 +13,7 @@ import (
 	"regexp"
 
 	"github.com/namvu9/bencode"
+	"github.com/namvu9/bitsy/pkg/btorrent/size"
 )
 
 // Torrent contains metadata for one or more files and wraps
@@ -71,7 +72,7 @@ func (t *Torrent) Dict() *bencode.Dictionary {
 	return t.dict
 }
 
-func (t *Torrent) PieceLength() Size {
+func (t *Torrent) PieceLength() size.Size {
 	info, ok := t.Info()
 	if !ok {
 		panic("torrent has no info dict")
@@ -79,7 +80,7 @@ func (t *Torrent) PieceLength() Size {
 
 	pieceLength, ok := info.GetInteger("piece length")
 
-	return Size(pieceLength)
+	return size.Size(pieceLength)
 }
 
 // Pieces returns the hashes of the pieces that constitute
@@ -236,7 +237,7 @@ func (t *Torrent) Files() []File {
 		return []File{
 			{
 				Name:     name,
-				Length:   Size(fileLength),
+				Length:   size.Size(fileLength),
 				FullPath: name,
 				Pieces:   pieces,
 			},
@@ -282,11 +283,11 @@ func (t *Torrent) getFiles(files bencode.List) []File {
 // Length returns the sum total size, in bytes, of the
 // torrent files.  In the case of a single-file torrent, it
 // is equal to the size of that file.
-func (t *Torrent) Length() Size {
-	var sum Size
+func (t *Torrent) Length() size.Size {
+	var sum size.Size
 
 	for _, file := range t.Files() {
-		sum += Size(file.Length)
+		sum += size.Size(file.Length)
 	}
 
 	return sum

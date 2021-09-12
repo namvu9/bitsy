@@ -29,6 +29,7 @@ import (
 	"github.com/namvu9/bitsy/internal/peers"
 	"github.com/namvu9/bitsy/internal/session"
 	"github.com/namvu9/bitsy/pkg/btorrent"
+	"github.com/namvu9/bitsy/pkg/btorrent/size"
 	"github.com/spf13/cobra"
 )
 
@@ -183,7 +184,7 @@ func printStat(stat map[string]interface{}) string{
 			if count == 5 {
 				break
 			}
-			fmt.Fprintf(&sb, "%d: %s %s / s (Total: %s)\n", idx, p.IP, btorrent.Size(p.UploadRate), btorrent.Size(p.Uploaded))
+			fmt.Fprintf(&sb, "%d: %s %s / s (Total: %s)\n", idx, p.IP, size.Size(p.UploadRate), size.Size(p.Uploaded))
 			count++
 		}
 

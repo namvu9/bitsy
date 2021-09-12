@@ -7,7 +7,7 @@ import (
 
 	"github.com/namvu9/bitsy/internal/data"
 	"github.com/namvu9/bitsy/internal/peers"
-	"github.com/namvu9/bitsy/pkg/btorrent"
+	"github.com/namvu9/bitsy/pkg/btorrent/size"
 )
 
 type freq struct {
@@ -29,7 +29,7 @@ func sortByValue(x map[int]int) []freq {
 	return out
 }
 
-func min(a, b btorrent.Size) btorrent.Size {
+func min(a, b size.Size) size.Size {
 	if a < b {
 		return a
 	}

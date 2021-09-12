@@ -1,27 +1,17 @@
 package btorrent
 
 import (
-	"fmt"
 	"path"
 
 	"github.com/namvu9/bencode"
-)
-
-// Size is the size of the file if bytes
-type Size uint64
-
-// Sizes
-const (
-	KiB = 1024
-	MiB = 1024 * 1024
-	GiB = 1024 * 1024 * 1024
+	"github.com/namvu9/bitsy/pkg/btorrent/size"
 )
 
 // A File represents contains the metadata describing a
 // particular file of a torrent
 type File struct {
 	Name     string
-	Length   Size
+	Length   size.Size
 	FullPath string
 
 	// The SHA-1 hashes of the pieces that constitute the file
@@ -43,7 +33,7 @@ func getFileData(offset int, file bencode.Dictionary, pieces [][]byte, t Torrent
 
 	return File{
 		Name:     path.Base(p),
-		Length:   Size(fileLength),
+		Length:   size.Size(fileLength),
 		FullPath: p,
 		Pieces:   fPieces,
 	}, overlap
@@ -84,35 +74,3 @@ func getFilePath(segments bencode.List) string {
 	return p
 }
 
-// KiB returns the size of the file in Kibibytes (fs / 1024)
-func (fs Size) KiB() float64 {
-	return float64(fs) / KiB
-}
-
-// MiB returns the size of the file in Mebibytes (fs /
-// 1024^2)
-func (fs Size) MiB() float64 {
-	return float64(fs) / MiB
-}
-
-// GiB returns the size of the file in Gibibytes (fs /
-// 1024^3)
-func (fs Size) GiB() float64 {
-	return float64(fs) / GiB
-}
-
-func (fs Size) String() string {
-	if fs < 1024 {
-		return fmt.Sprintf("%d B", fs)
-	}
-
-	if fs < 1024*1024 {
-		return fmt.Sprintf("%.2f KiB", fs.KiB())
-	}
-
-	if fs < 1024*1024*1024 {
-		return fmt.Sprintf("%.2f MiB", fs.MiB())
-	}
-
-	return fmt.Sprintf("%.2f GiB", fs.GiB())
-}

@@ -12,11 +12,12 @@ import (
 	"github.com/namvu9/bitsy/pkg/bits"
 	"github.com/namvu9/bitsy/pkg/btorrent"
 	"github.com/namvu9/bitsy/pkg/btorrent/peer"
+	"github.com/namvu9/bitsy/pkg/btorrent/size"
 )
 
 type ClientState int
 
-const TOP_SPEED = 50 * btorrent.MiB
+const TOP_SPEED = 50 * size.MiB
 
 func maxPendingPieces(pieceSize int, topSpeed int) int {
 	return topSpeed / pieceSize
@@ -80,7 +81,7 @@ type Client struct {
 	DataIn chan peer.PieceMessage
 
 	Pending      int
-	DownloadRate btorrent.Size
+	DownloadRate size.Size
 	Uploaded     int
 
 	workers map[int]*worker
@@ -227,7 +228,7 @@ func (c *Client) download() {
 				c.emit(StateChange{To: SEEDING})
 			}
 
-			c.DownloadRate = btorrent.Size(downloadRate)
+			c.DownloadRate = size.Size(downloadRate)
 		}
 	}
 }
