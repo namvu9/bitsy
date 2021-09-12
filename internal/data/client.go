@@ -237,7 +237,7 @@ func (c *Client) done() bool {
 }
 
 func (c *Client) downloadN(n int) {
-	for _, pieceIdx := range c.nextNPieces(n, c.workers, c.piecePrio) {
+	for _, pieceIdx := range c.nextNPieces(n, c.workers) {
 		c.downloadPiece(uint32(pieceIdx), false)
 	}
 }
