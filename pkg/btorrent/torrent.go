@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"path"
 	"regexp"
-	"strings"
 
 	"github.com/namvu9/bencode"
 )
@@ -330,46 +329,6 @@ func Load(location string) (*Torrent, error) {
 	}
 
 	return t, nil
-}
-
-func LoadMagnetURL(u *url.URL) (*Torrent, error) {
-	var dict bencode.Dictionary
-
-	queries := u.Query()
-
-	var trackerTier bencode.List
-	trs, ok := queries["tr"]
-	if !ok || len(trs) == 0 {
-		// DHT is currently not supported
-		return nil, fmt.Errorf("magnet link must specify at least 1 tracker")
-	}
-
-	for _, tracker := range queries["tr"] {
-		trackerTier = append(trackerTier, bencode.Bytes(tracker))
-	}
-
-	dict.SetStringKey("announce", trackerTier[0])
-	dict.SetStringKey("announce-list", bencode.List{trackerTier})
-
-	var (
-		xt       = strings.Split(queries.Get("xt"), ":")
-		protocol = xt[1]
-		urn      = xt[2]
-	)
-	if protocol != "btih" {
-		return nil, fmt.Errorf("Only BitTorrent URNs (btih) are supported")
-	}
-	hash, err := hex.DecodeString(urn)
-	if err != nil {
-		return nil, err
-	}
-
-	dict.SetStringKey("info-hash", bencode.Bytes(hash))
-	dict.SetStringKey("dn", bencode.Bytes(queries.Get("dn")))
-
-	return &Torrent{
-		dict: &dict,
-	}, nil
 }
 
 func loadFromFile(path string) (*Torrent, error) {
