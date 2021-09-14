@@ -149,7 +149,7 @@ func clear() {
 	cmd.Run()
 }
 
-func printStat(stat map[string]interface{}) string{
+func printStat(stat map[string]interface{}) string {
 	var sb strings.Builder
 
 	clients := stat["clients"].(map[string]data.ClientStat)

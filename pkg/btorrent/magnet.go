@@ -60,6 +60,5 @@ func getTrackers(url *stdurl.URL) (bencode.List, error) {
 		trackerTier = append(trackerTier, bencode.Bytes(tracker))
 	}
 
-	return trackerTier, nil
+	return bencode.List{trackerTier}, nil
 }
-

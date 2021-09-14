@@ -19,7 +19,7 @@ import (
 // Torrent contains metadata for one or more files and wraps
 // a bencoded dictionary.
 type Torrent struct {
-	dict *bencode.Dictionary
+	dict  *bencode.Dictionary
 	files []File
 }
 
@@ -103,7 +103,7 @@ func (t *Torrent) Pieces() [][]byte {
 	}
 
 	// Group pieces according to piece length
-	pieces := GroupBytes(piecesBytes, 20) // SHA1 hash
+	pieces := groupBytes(piecesBytes, 20) // SHA1 hash
 	return pieces
 }
 
@@ -193,12 +193,14 @@ func (t *Torrent) AnnounceList() [][]string {
 	return out
 }
 
-// TODO: TEST
-func GroupBytes(data []byte, n int) [][]byte {
+// TODO: test
+// groupBytes groups a sequence of bytes into groups of size
+// n. The last group is not padded and may therefore be
+// smaller than n.
+func groupBytes(data []byte, n int) [][]byte {
 	var out [][]byte
 
 	var group []byte
-
 	for _, b := range data {
 		if len(group) == n {
 			out = append(out, group)
@@ -264,7 +266,6 @@ func (t *Torrent) getFiles(files bencode.List) []File {
 		fileLength, _ := fDict.GetInteger("length")
 		offset := sum % int(t.PieceLength())
 
-		// TODO: BUG: Must consider offsets
 		tf, overlap := getFileData(offset, *fDict, pieces, *t)
 		out = append(out, tf)
 
@@ -346,7 +347,8 @@ func loadFromFile(path string) (*Torrent, error) {
 	return &Torrent{dict: d}, nil
 }
 
-// TODO: Validate torrent
+// Save writes the bencoded contents of the torrent to the
+// location pointed to by path
 func Save(path string, t *Torrent) error {
 	data, err := bencode.Marshal(t.Dict())
 	if err != nil {
