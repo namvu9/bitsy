@@ -124,8 +124,6 @@ func (asb *assembler) assembleFile(t btorrent.Torrent, fileIdx int, w io.Writer)
 		fileSize     = uint64(file.Length)
 	)
 
-	//fmt.Printf("File %s %d, Offset %d, Size %d, Overlap: %d\n", file.Name, fileIdx, offset, file.Length, uint64(file.Length) % pieceLen)
-
 	fmt.Printf("File %s %d, first piece idx: %d, last: %d\n", file.Name, fileIdx, t.GetPieceIndex(file.Pieces[0]), t.GetPieceIndex(file.Pieces[len(file.Pieces)-1]))
 
 	for _, hash := range file.Pieces {
@@ -136,7 +134,6 @@ func (asb *assembler) assembleFile(t btorrent.Torrent, fileIdx int, w io.Writer)
 		}
 
 		var left = fileSize - uint64(totalWritten)
-		fmt.Println("HASH", left, offset)
 		var data []byte
 		if left < pieceLen {
 			data = piece[offset : offset+left]

@@ -103,7 +103,6 @@ func (c *Client) Stat() ClientStat {
 
 		left += int(file.Length) - downloaded
 
-
 		fs = append(fs, FileStat{
 			Index:      i,
 			Ignored:    ignored,
