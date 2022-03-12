@@ -1,6 +1,6 @@
 # bitsy
 
-**WIP**: bitsy is a simple bittorrent client that I wrote as a learning experience and to better understand the BitTorrent P2P protocol. It implements only the core parts of the spec (BEP-3) needed for basic functionality (download/upload). 
+bitsy is a simple bittorrent client that I wrote as a learning experience and to better understand the BitTorrent P2P protocol. It implements only the core parts of the spec (BEP-3) needed for basic functionality (download/upload). 
 
 I've only tested this on my own local setup, so it's unlikely to work on other systems as is, but in theory it can be used as follows:
 ```
